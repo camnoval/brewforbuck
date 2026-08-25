@@ -1,0 +1,48 @@
+DRINK MENU
+cocktails
+drinks can be served in a souvenir cup +5
+bushwacker
+house made coffee infused rum, cream of cacao, turbinado, milk, cream of coconut and 151, frozen and topped with crushed cocoa - 12
+old fashioned
+elijah craig small batch bourbon, turbinado, bittercube trinity bitters - 10
+drunkle brent's pina colada
+cruzan light rum, coconut rum, pineapple juice - 12
+spiked strawberry lemonade
+new amsterdam vodka, fresh squeezed lemonade - 11
+banana hammock
+banana rum, coconut rum, pineapple juice - 12
+painkiller
+cruzan aged light rum, calypso spiced rum - 12
+scratch margarita
+camarena reposado tequila - 12
+la paloma
+gran centenario reposado tequila - 12
+mocktails
+pina colada - 7
+strawberry margarita - 7
+ginger pineapple smash - 7
+strawberry daiquiri - 7
+DRAFT BEER
+beach house ipa
+crisp, clean and full of hop 5.8% - 7
+beach house amber
+a well balanced american beer 5.4% - 6
+miller lite - 5
+yuengling - 5
+dos equis lager - 5
+bottles/cans
+non-alcoholic beers - 3.50
+miller lite - 4.25
+bud light - 4.25
+budweiser - 4.25
+michelob ultra - 4.25
+corona light - 5.25
+white claw - 5.25
+high noon - 6.25
+WINE
+red
+cline sonoma county pinot noir - 10
+josh cabernet - 9
+white
+josh chardonnay - 9
+house wine - 5
