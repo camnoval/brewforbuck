@@ -1,31 +1,30 @@
-import Foundation
-
 /// A drink's price, and the single structural guard behind the price invariant (§10, R-invariant):
-/// `Price` cannot represent a missing, zero, or negative amount. Its only initializer is failable
-/// and rejects non-positive values, so anything that ends up holding a `Price` provably had a real,
-/// positive price read off the menu. A line with no readable price never produces a `Price`, so it
-/// can never be assembled into a `DrinkOption`, so it can never reach the ranker.
+/// `Price` cannot represent a missing, zero, or negative amount. Its only initializers are failable
+/// and reject non-positive values, so anything holding a `Price` provably had a real, positive price
+/// read off the menu. A line with no readable price never produces a `Price`, so it can never be
+/// assembled into a `DrinkOption`, so it can never reach the ranker.
 ///
-/// Currency itself is a UI/formatting concern (a menu photo rarely states one reliably), so v1
-/// models only the amount and formats with the device locale at the edge.
+/// Money is stored as integer **cents** — exact, no floating/decimal fuzz. Deliberately uses no
+/// `Foundation` (no `Decimal`), which keeps `CoreModel` a zero-dependency module (§4) and also
+/// side-steps a known explicit-modules toolchain bug that reports a bogus Foundation↔CoreModel
+/// cycle. Currency itself is a UI/formatting concern and is applied at the edge with the locale.
 public struct Price: Equatable, Hashable, Comparable, Sendable {
-    public let amount: Decimal
+    /// The amount in whole cents. Always > 0.
+    public let cents: Int
 
-    /// Fails for non-positive amounts. This failable init is the enforcement point.
-    public init?(_ amount: Decimal) {
-        guard amount > 0 else { return nil }
-        self.amount = amount
-    }
-
-    /// Convenience for fixtures/tests written in dollars.
-    public init?(dollars: Double) {
-        self.init(Decimal(dollars))
-    }
-
-    /// Convenience for exact cents (avoids Double rounding when precision matters).
+    /// Fails for non-positive amounts — the enforcement point.
     public init?(cents: Int) {
-        self.init(Decimal(cents) / 100)
+        guard cents > 0 else { return nil }
+        self.cents = cents
     }
 
-    public static func < (lhs: Price, rhs: Price) -> Bool { lhs.amount < rhs.amount }
+    /// Convenience for fixtures/tests written in dollars (rounds to the nearest cent).
+    public init?(dollars: Double) {
+        self.init(cents: Int((dollars * 100).rounded()))
+    }
+
+    /// The amount in dollars — used by the value formulas in `ValueRanker` (Phase 4).
+    public var dollars: Double { Double(cents) / 100 }
+
+    public static func < (lhs: Price, rhs: Price) -> Bool { lhs.cents < rhs.cents }
 }

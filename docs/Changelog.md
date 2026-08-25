@@ -3,6 +3,14 @@
 *Append-only history (§2). Newest on top. The Handoff is the live "where we are"; this is
 the log — don't let them merge.*
 
+## 2026-08-25 · Fix — CoreModel made Foundation-free (build fix)
+- `swift test` on macOS hit `error: circular dependency between modules 'Foundation' and 'CoreModel'`
+  — a known explicit-modules toolchain bug (Xcode 15.4/16/26), not a real cycle in our graph.
+- `CoreModel`'s only Foundation use was `Decimal` in `Price`. Reworked `Price` to store integer
+  **cents** (`Int`) with `dollars` accessor; removed `import Foundation`. `CoreModel` is now a
+  zero-dependency module (§4), which removes the import that triggered the bogus cycle.
+- Updated `PriceTests` accordingly. No behaviour change to the price invariant (§10).
+
 ## 2026-08-25 · Tooling — auto-generated structure doc
 - Added `Tooling/print_structure.sh` → regenerates `docs/ProjectStructure.md` from the real tree
   (portable: no `tree`, no GNU `find -printf`). Wired into `run_checks` step [0/2] so it refreshes
