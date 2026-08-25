@@ -29,6 +29,7 @@ let package = Package(
         .target(name: "CoreServices", dependencies: ["CoreModel", "CoreContracts"]),
 
         .testTarget(name: "CoreModelTests", dependencies: ["CoreModel"]),
+        .testTarget(name: "CoreContractsTests", dependencies: ["CoreContracts", "CoreModel"]),
         .testTarget(
             name: "CoreServicesTests",
             dependencies: ["CoreServices", "CoreContracts", "CoreModel"]

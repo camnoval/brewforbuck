@@ -34,6 +34,7 @@ The iOS app (`AppTarget/`, Week 1+) opens in Xcode on macOS and depends on `Core
 | The current directory tree (auto-generated) | [`ProjectStructure.md`](./ProjectStructure.md) |
 | Current state + what to do next | [`Handoff.md`](./Handoff.md) |
 | The assumptions that could break it | [`Risks.md`](./Risks.md) |
+| Where the ABV/size numbers come from | [`BeverageDataSources.md`](./BeverageDataSources.md) |
 | A non-technical overview | [`PlainLanguageGuide.md`](./PlainLanguageGuide.md) |
 | Session-by-session history | [`Changelog.md`](./Changelog.md) |
 

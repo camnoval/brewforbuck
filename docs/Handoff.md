@@ -5,6 +5,82 @@ here — keep this lean. Newest note on top; each new note says plainly what it 
 
 ---
 
+## 2026-08-25 — Phase 5 + demo app landed (end-to-end)
+
+*Supersedes the notes below re: current state and next step.*
+
+**State:** the pure value engine is complete — `MenuParser` → `ABVEstimator`/`SizeEstimator` →
+`ValueRanker`, assembled by `MenuPipeline` (`[String] → MenuAnalysis`). A minimal SwiftUI **demo
+app** in `AppTarget/` runs that pipeline on bundled sample menus and shows the ranking, provenance
+notes, and the needsPrice / excluded-non-alcoholic buckets — runnable on device via
+`AppTarget/HOW_TO_RUN.md` (no camera yet).
+
+**Verify (engine):** `cd Core && swift test`. **Run (app):** follow `AppTarget/HOW_TO_RUN.md`.
+
+**Parser is bounded v1 (R1).** It handles the common menu shapes (see `MenuParserTests`), not every
+layout; the manual add/edit path is the intended safety net for misreads.
+
+**Next — the real capture flow (Week 1):** `VisionTextRecognizer` implementing `TextRecognizer`
+(`VNRecognizeTextRequest`, on-device), a camera/photo picker, the **21+ gate** (R3), and inline
+correction that promotes an estimate to `.read` and re-ranks. The engine doesn't change — only the
+source of the OCR lines. Then monetization (Week 2): RevenueCat `remove_ads` + RevenueCat Ads behind
+the existing `PurchaseController`/`AdPresenter` contracts.
+
+---
+
+## 2026-08-25 — Phase 4 landed (ValueRanker)
+
+*Supersedes the notes below re: current state and next step.*
+
+**State:** `ValueRanker` (CoreServices) computes standard-drinks-per-dollar (v1) and
+calories-per-dollar (v2) and sorts best-first, taking `[PricedDrink]`. The doc's worked example is a
+test. The whole value engine is now provable headless: brand/style/fallback knowledge → priced,
+alcoholic drinks → ranking.
+
+**Verify:** `cd Core && swift test`.
+
+**Next (Phase 5 — parser + estimators):** the section-state `MenuParser` (Change A: header-priced
+sections), `ABVEstimator`/`SizeEstimator` wiring `StaticBeverageKnowledge` (read-if-printed, else
+estimate), the `needsPrice` split, and the description-line suppression (Finding 4). Designed against
+`Tooling/Fixtures/` + a Vision-noise pass (real OCR is messy, per your note). This is the last pure
+phase; after it the value engine is end-to-end from OCR lines to a ranked list, still with no UI.
+
+---
+
+## 2026-08-25 — Brand table added (data-driven, 161 brands)
+
+*Supersedes nothing structural; extends Phase 3.*
+
+Brand data now lives in `Tooling/Data/beverages.json` (script-readable) and is codegen'd to
+`GeneratedBrandTable.swift` by `Tooling/generate_brand_table.sh`. Lookup order is now **brand →
+style → category fallback**, each flagged via `EstimateSource` (`.brandMatch` / `.styleChart` /
+`.categoryFallback` / `.unclassifiedFallback`). To change the data: edit the JSON, run the generator,
+`swift test`.
+
+---
+
+## 2026-08-25 — Phase 3 landed (CoreContracts + sourced knowledge)
+
+*Supersedes the notes below re: current state and next step.*
+
+**State:** four protocols in `CoreContracts` (Foundation-free), the sourced `StaticBeverageKnowledge`
+(style chart → category fallback, flagged by `EstimateSource`), and test doubles. New `CoreContractsTests`
+target. Data provenance is documented in `docs/BeverageDataSources.md`.
+
+**Design note (per your ask):** ABV/size are sourced (NIAAA + BJCP/Wine Folly), and the app is honest
+about confidence — `.styleChart(matched:)` when a style/varietal matched, `.categoryFallback` when it
+didn't. The menu's printed value still wins over both.
+
+**Verify:** `cd Core && swift test` — now includes `CoreContractsTests`.
+
+**Next (Phase 4 — ValueRanker):** the standard-drinks-per-dollar metric + sort, taking `[PricedDrink]`,
+with the worked-example test and the price-invariant test (§8). No photos needed.
+
+**Then Phase 5 (parser + estimators):** wires `StaticBeverageKnowledge` into `ABVEstimator`/`SizeEstimator`
+and adds the section-state `MenuParser` (Change A), designed against the fixtures + a Vision-noise pass.
+
+---
+
 ## 2026-08-25 — Phase 2 landed (CoreModel spine)
 
 *Supersedes the notes below re: current state and next step.*

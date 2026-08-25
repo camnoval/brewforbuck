@@ -35,9 +35,9 @@ producing a list of these and sorting it.
 | Layer | Lives in | Depends on | Job | Status |
 |---|---|---|---|---|
 | **Model** | `Core/Sources/CoreModel` | nothing | `DrinkOption` spine + `Provenance<T>` + units | ✅ Phase 2 |
-| **Contracts** | `Core/Sources/CoreContracts` | CoreModel | Protocols the shell implements: OCR, beverage knowledge, purchases, ads | ⏳ Phase 3 |
-| **Services (pure)** | `Core/Sources/CoreServices` | CoreModel | Parse → items; estimate ABV/size; compute + sort the value metric | ⏳ Phases 4–5 |
-| **Features (UI)** | `AppTarget/Sources/Features` | Core | Capture, Results, Paywall — thin, no business logic | ⏳ Week 1 |
+| **Contracts** | `Core/Sources/CoreContracts` | CoreModel | Protocols the shell implements: OCR, beverage knowledge, purchases, ads (+ the pure `StaticBeverageKnowledge`) | ✅ Phase 3 |
+| **Services (pure)** | `Core/Sources/CoreServices` | CoreModel/CoreContracts | Parse → items; estimate ABV/size; compute + sort the value metric | ✅ Phases 4–5 |
+| **Features (UI)** | `AppTarget/` | Core | Results screen demo (sample menus, no camera yet) | ◑ demo app |
 | **Infrastructure (shell)** | `AppTarget/Sources/Infrastructure` | Core (protocols) | Vision, RevenueCat, RevenueCat Ads — the only impure code | ⏳ Week 2 |
 
 **Dependency direction points down only.** `CoreServices` never imports Vision or
@@ -63,25 +63,44 @@ no SwiftUI/UIKit/Vision import.
   - `PricedDrink.swift` — ranker input; `init?` refuses `.nonAlcoholic` (Change B).
   - `RankedDrink.swift` — ranker output holder (value + rank).
   - `ValueMetric.swift` — `.standardDrinksPerDollar` (v1) + `.caloriesPerDollar` (v2).
-- **`Sources/CoreContracts/`** ⏳ Phase 3 — `TextRecognizer`, `BeverageKnowledge`,
-  `PurchaseController`, `AdPresenter` + `StaticBeverageKnowledge`, `FakeTextRecognizer`.
-- **`Sources/CoreServices/`** ⏳ Phases 4–5 — `ValueRanker` (Phase 4), `MenuParser` /
-  `ABVEstimator` / `SizeEstimator` (Phase 5).
-- **`Tests/CoreModelTests/`** ✅ — mirrors CoreModel 1:1 (§8): Provenance/Price/Volume/
-  BeverageCategory/DrinkOption/ValueMetric behaviour + `PricedDrinkInvariantTests` (the Change-B
-  structural invariant). **`Tests/CoreServicesTests/`** ⏳ — scaffolding until Phase 4.
+- **`Sources/CoreContracts/`** ✅ Phase 3 — four protocols + default knowledge + doubles:
+  - `TextRecognizer.swift` — protocol + `CapturedImage` (Foundation-free photo handle).
+  - `BeverageKnowledge.swift` — protocol + `BeverageProfile` + `EstimateSource`
+    (`.styleChart` / `.categoryFallback` / `.unclassifiedFallback`).
+  - `PurchaseController.swift`, `AdPresenter.swift` — entitlement + ads protocols.
+  - `StaticBeverageKnowledge.swift` — brand table → style/varietal chart → category fallback,
+    each flagged by `EstimateSource` (see `docs/BeverageDataSources.md`).
+  - `GeneratedBrandTable.swift` — AUTO-GENERATED 161-brand table (do not hand-edit).
+  - `TestDoubles.swift` — `FakeTextRecognizer`, `InMemoryPurchaseController` (actor), `NoopAdPresenter`.
+- **`Sources/CoreServices/`** ✅ — the pure pipeline:
+  - `MenuParser.swift` — section-state machine: price/ABV/size scanning, header-price inheritance
+    (Change A), description-line suppression (Finding 4). Foundation-free (no regex).
+  - `ABVEstimator.swift` / `SizeEstimator.swift` — read-if-printed, else estimate via the profile.
+  - `ValueRanker.swift` — the metric + sort (§7).
+  - `MenuPipeline.swift` — end-to-end `[String] → MenuAnalysis` (ranked + needsPrice + excluded NA).
+- **`Tests/CoreModelTests/`** ✅ — mirrors CoreModel 1:1 (§8).
+- **`Tests/CoreContractsTests/`** ✅ — `ContractsSmokeTests` (the doubles),
+  `StaticBeverageKnowledgeTests` (chart hits, fallback flagging), `BrandTableTests` (brand
+  specificity, NA-brand detection, section refinement).
+- **`Tests/CoreServicesTests/`** ✅ — `ValueRankerTests`, `MenuParserTests` (price formats,
+  header-price inheritance, needsPrice, description suppression, printed ABV), `MenuPipelineTests`
+  (end-to-end ranking + buckets).
 
 ### `Tooling/`
 
 - **`run_checks.sh`** ✅ — the single pre-flight gate (§9): refresh `ProjectStructure.md` →
   `swift test` → app schemes on macOS. Green gate = safe to ship.
 - **`print_structure.sh`** ✅ — regenerates `docs/ProjectStructure.md` from the real tree.
+- **`generate_brand_table.sh`** ✅ — codegen: `Data/beverages.json` → `GeneratedBrandTable.swift`.
+- **`Data/beverages.json`** ✅ — the brand → ABV/category dataset (script-readable source of truth).
 - **`Fixtures/`** ✅ — transcribed real-menu OCR lines + `INSPECTION_FINDINGS.md` (§5).
 
-### `AppTarget/` ⏳ Week 1
+### `AppTarget/` ◑ demo app
 
-Not yet created. Xcode-project generation approach (raw `.xcodeproj` vs XcodeGen/Tuist vs
-SPM-app) and min iOS version are the first Week-1 decisions.
+A minimal SwiftUI app that runs the real `MenuPipeline` on bundled sample menus (no camera yet).
+`BangForBuckApp.swift`, `ContentView.swift`, `SampleMenus.swift`, and `HOW_TO_RUN.md` (create the
+app shell in Xcode, add the local `Core` package, run on device). Camera/Vision + the full
+Features/Infrastructure split is the next step.
 
 ### `docs/`
 
