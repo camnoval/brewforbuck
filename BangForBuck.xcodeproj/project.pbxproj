@@ -6,6 +6,12 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		6EF9F46C303E512900577118 /* CoreContracts in Frameworks */ = {isa = PBXBuildFile; productRef = 6EF9F46B303E512900577118 /* CoreContracts */; };
+		6EF9F46E303E512900577118 /* CoreModel in Frameworks */ = {isa = PBXBuildFile; productRef = 6EF9F46D303E512900577118 /* CoreModel */; };
+		6EF9F470303E512900577118 /* CoreServices in Frameworks */ = {isa = PBXBuildFile; productRef = 6EF9F46F303E512900577118 /* CoreServices */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		6EF9F3FA303E504800577118 /* BangForBuck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BangForBuck.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +29,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6EF9F46C303E512900577118 /* CoreContracts in Frameworks */,
+				6EF9F470303E512900577118 /* CoreServices in Frameworks */,
+				6EF9F46E303E512900577118 /* CoreModel in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +74,9 @@
 			);
 			name = BangForBuck;
 			packageProductDependencies = (
+				6EF9F46B303E512900577118 /* CoreContracts */,
+				6EF9F46D303E512900577118 /* CoreModel */,
+				6EF9F46F303E512900577118 /* CoreServices */,
 			);
 			productName = BangForBuck;
 			productReference = 6EF9F3FA303E504800577118 /* BangForBuck.app */;
@@ -94,6 +106,9 @@
 			);
 			mainGroup = 6EF9F3F1303E504800577118;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				6EF9F46A303E512900577118 /* XCLocalSwiftPackageReference "BangForBuck/Core" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 6EF9F3FB303E504800577118 /* Products */;
 			projectDirPath = "";
@@ -261,12 +276,13 @@
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = camnoval.BangForBuck;
+				PRODUCT_BUNDLE_IDENTIFIER = NovalCo.BangForBuck;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -293,12 +309,13 @@
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = camnoval.BangForBuck;
+				PRODUCT_BUNDLE_IDENTIFIER = NovalCo.BangForBuck;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -332,6 +349,28 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		6EF9F46A303E512900577118 /* XCLocalSwiftPackageReference "BangForBuck/Core" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = BangForBuck/Core;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		6EF9F46B303E512900577118 /* CoreContracts */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoreContracts;
+		};
+		6EF9F46D303E512900577118 /* CoreModel */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoreModel;
+		};
+		6EF9F46F303E512900577118 /* CoreServices */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CoreServices;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 6EF9F3F2303E504800577118 /* Project object */;
 }
