@@ -67,9 +67,11 @@ public struct MenuParser {
     static let headerKeywords: [([String], BeverageCategory)] = [
         (["non-alcoholic", "non alcoholic", "mocktails", "booze free", "zero proof"], .nonAlcoholic),
         (["frozen cocktails", "frozen margaritas", "frozen"], .frozenCocktail),
-        (["on tap", "on draught", "draught", "draft beers", "draft selections", "draft beer", "on draft"], .draftBeer),
+        (["on tap", "on draught", "draught", "draft beers", "draft selections", "draft beer", "on draft", "drafts", "draft"], .draftBeer),
         (["tall boy", "bottled beer", "bottles/cans", "bottles", "imports", "domestic beer", "domestics"], .bottledBeer),
-        (["hard seltzer", "canned cocktails", "seltzers"], .seltzer),
+        // "cans" is a container, not a style; most canned items brand-match anyway. Weak seltzer/RTD
+        // default for anything that doesn't (ABV is usually printed, so this only nudges the size).
+        (["hard seltzer", "canned cocktails", "seltzers", "cans"], .seltzer),
         (["ciders"], .cider),
         (["shots"], .shot),
         (["martinis", "old-fashioneds", "old fashioneds"], .martini),
@@ -101,8 +103,47 @@ public struct MenuParser {
             }
         }
 
-        let name = trimTrailingSeparators(trimmed(namePart))
+        // Many menus print "NAME ABV x% — price"; the ABV/size belong on their own axes (captured
+        // above as readABV/readSize), not in the displayed name. Strip those fragments so the name
+        // reads cleanly ("Coors Light", not "COORS LIGHT 22oz. ABV 4.2%") and brand matching stays
+        // clean.
+        let name = cleanName(trimTrailingSeparators(trimmed(namePart)))
         return (price, name, readABV, readSize)
+    }
+
+    /// Drop `ABV`, a percentage token (`4.2%`, `>.5%`), a size token (`22oz.`, `16oz`), and stray
+    /// dashes from a parsed name. Conservative: only removes tokens that are unambiguously one of
+    /// those, so real name words are kept.
+    static func cleanName(_ name: String) -> String {
+        let kept = name.split(separator: " ").map(String.init).filter { token in
+            !(isABVWord(token) || isPercentToken(token) || isSizeToken(token) || isDashToken(token))
+        }
+        return trimTrailingSeparators(kept.joined(separator: " "))
+    }
+
+    static func isABVWord(_ t: String) -> Bool { t.lowercased() == "abv" }
+
+    static func isDashToken(_ t: String) -> Bool {
+        let dashes: Set<Character> = ["-", "–", "—"]
+        return !t.isEmpty && t.allSatisfy { dashes.contains($0) }
+    }
+
+    static func isPercentToken(_ t: String) -> Bool {
+        var s = Array(t)
+        while s.last == "." { s.removeLast() }
+        guard s.last == "%" else { return false }
+        s.removeLast()
+        while s.first == ">" || s.first == "<" { s.removeFirst() }
+        guard !s.isEmpty else { return false }
+        return s.allSatisfy { $0.isNumber || $0 == "." }
+    }
+
+    static func isSizeToken(_ t: String) -> Bool {
+        var s = Array(t.lowercased())
+        while s.last == "." { s.removeLast() }
+        guard s.count >= 3, s[s.count - 2] == "o", s[s.count - 1] == "z" else { return false }
+        let core = s[0..<(s.count - 2)]
+        return !core.isEmpty && core.allSatisfy { $0.isNumber || $0 == "." }
     }
 
     /// A no-price line that reads like an ingredient list rather than a drink name (Finding 4).
@@ -153,7 +194,7 @@ public struct MenuParser {
     }
 
     static func trimTrailingSeparators(_ s: String) -> String {
-        let seps: Set<Character> = [" ", "-", "|", ":", ",", "•", "·", "."]
+        let seps: Set<Character> = [" ", "-", "–", "—", "|", ":", ",", "•", "·", "."]
         var chars = Array(s)
         while let last = chars.last, seps.contains(last) { chars.removeLast() }
         return String(chars)

@@ -26,43 +26,30 @@ public struct MenuPipeline {
         self.knowledge = knowledge
     }
 
-    public func analyze(lines: [String], metric: ValueMetric) -> MenuAnalysis {
-        var priced: [PricedDrink] = []
-        var needsPrice: [String] = []
+    /// Editable capture-flow entry point (Week 1): the same parse+enrich as `analyze`, but returns a
+    /// mutable `MenuSession` the UI can correct and add prices to, then re-rank. `analyze` is the
+    /// read-only snapshot over the same data.
+    public func makeSession(lines: [String], metric: ValueMetric) -> MenuSession {
+        var drinks: [EditableDrink] = []
         var excluded: [String] = []
-
-        for item in parser.parse(lines) {
-            let sectionCat: BeverageCategory? = item.category == .unknown ? nil : item.category
-            let profile = knowledge.profile(for: item.name, sectionCategory: sectionCat)
-
-            // Non-alcoholic (by section or brand) never ranks (Change B).
-            if profile.category == .nonAlcoholic {
-                excluded.append(item.name)
-                continue
-            }
-            // No readable price → the "add a price" bucket, never a guessed price (§10).
-            guard let price = item.price else {
-                needsPrice.append(item.name)
-                continue
-            }
-
-            let option = DrinkOption(
-                name: item.name, price: price,
-                abv: ABVEstimator.estimate(item, profile: profile),
-                size: SizeEstimator.estimate(item, profile: profile),
-                category: profile.category
-            )
-            guard let pricedDrink = PricedDrink(option) else {
-                excluded.append(item.name)   // defensive: category flipped non-alcoholic
-                continue
-            }
-            priced.append(pricedDrink)
+        // Parse order gives each drink a stable id for inline correction.
+        for (index, item) in parser.parse(lines).enumerated() {
+            let (drink, excludedName) = DrinkResolver.resolve(item, id: index, knowledge: knowledge)
+            if let drink { drinks.append(drink) }
+            if let excludedName { excluded.append(excludedName) }
         }
+        return MenuSession(drinks: drinks, excludedNonAlcoholic: excluded, metric: metric)
+    }
 
+    /// One-shot read-only analysis. Kept for the headless demo and existing tests; internally it's
+    /// the initial snapshot of `makeSession`, so the two paths can never disagree.
+    public func analyze(lines: [String], metric: ValueMetric) -> MenuAnalysis {
+        let session = makeSession(lines: lines, metric: metric)
+        let priced = session.drinks.compactMap { $0.pricedDrink }
         return MenuAnalysis(
             ranked: ranker.rank(priced, by: metric),
-            needsPrice: needsPrice,
-            excludedNonAlcoholic: excluded
+            needsPrice: session.needsPriceDrinks.map { $0.name },
+            excludedNonAlcoholic: session.excludedNonAlcoholic
         )
     }
 }

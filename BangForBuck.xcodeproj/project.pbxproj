@@ -7,12 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		6E13CC3B3040E84100C7AAF7 /* AppIcon.ico in Resources */ = {isa = PBXBuildFile; fileRef = 6E13CC3A3040E84100C7AAF7 /* AppIcon.ico */; };
 		6EF9F46C303E512900577118 /* CoreContracts in Frameworks */ = {isa = PBXBuildFile; productRef = 6EF9F46B303E512900577118 /* CoreContracts */; };
 		6EF9F46E303E512900577118 /* CoreModel in Frameworks */ = {isa = PBXBuildFile; productRef = 6EF9F46D303E512900577118 /* CoreModel */; };
 		6EF9F470303E512900577118 /* CoreServices in Frameworks */ = {isa = PBXBuildFile; productRef = 6EF9F46F303E512900577118 /* CoreServices */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		6E13CC3A3040E84100C7AAF7 /* AppIcon.ico */ = {isa = PBXFileReference; lastKnownFileType = image.ico; path = AppIcon.ico; sourceTree = "<group>"; };
 		6EF9F3FA303E504800577118 /* BangForBuck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BangForBuck.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -43,6 +45,7 @@
 			children = (
 				6EF9F3FC303E504800577118 /* BangForBuck */,
 				6EF9F3FB303E504800577118 /* Products */,
+				6E13CC3A3040E84100C7AAF7 /* AppIcon.ico */,
 			);
 			sourceTree = "<group>";
 		};
@@ -124,6 +127,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6E13CC3B3040E84100C7AAF7 /* AppIcon.ico in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -266,11 +270,13 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 9VZ2M528HD;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.food-and-drink";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -299,11 +305,13 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 9VZ2M528HD;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.food-and-drink";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
