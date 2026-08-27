@@ -3,6 +3,53 @@
 *Append-only history (§2). Newest on top. The Handoff is the live "where we are"; this is
 the log — don't let them merge.*
 
+## 2026-08-27 · R1 hardening + results clarity + manual add/remove
+- **Two-column menus (R1):** real on-device scan of a two-column bar menu (Southside Braintree) fused
+  a left-column draft with a right-column bottle into one line. `LineAssembler` now detects columns
+  before assembling rows — an x-coverage histogram finds the low-coverage central **gutter** (robust
+  to a centered title/footer that spans it) and splits left/right, guarded by per-column count (≥3)
+  and width (≥0.18) so a single column with right-aligned prices is never mis-split. `MenuParser`
+  gained `cleanName` (strips embedded `ABV x%`, `>.5%`, `22oz.`, and stray dashes from names so
+  "COORS LIGHT 22oz. ABV 4.2%" reads as "COORS LIGHT" — ABV/size still captured on their own axes)
+  and recognizes `drafts`/`draft`/`cans` section headers. Tests: `LineAssemblerColumnTests`,
+  `MenuParserHardeningTests` (incl. an end-to-end two-column "no chimera" test).
+- **Results clarity:** each ranked row now shows the **menu price** explicitly and labels the derived
+  cost as **per standard drink** (e.g. "≈ 0.9 standard drinks · $9.44 per standard drink"), removing
+  the "$/drink looked wrong vs the sticker" confusion. Added a "How this is calculated" explainer with
+  the formulas. The standard-drink count is derived from the ranking value, so it can't drift from it.
+- **Manual add / remove:** new pure `MenuSession.addDrink(...)` / `removeDrink(id:)` — add a drink the
+  scan missed (all axes `.read`; category coerced alcoholic so Change B still holds) or remove a
+  misread line. Surfaced in `ResultsView` as a "+" add sheet, per-row remove in the renamed **"Not
+  sure about these"** section (was "Needs a price"), swipe-to-delete, and a "Remove" action in the
+  edit sheet (which now also edits price, not just ABV/size). Tests: `MenuSessionManualEntryTests`.
+- **UI pass:** `ResultsView` reworked from stock list rows to medallion ranks, chip-based metadata,
+  explicit menu-price pill, empty state, and section headers with icons. iOS 16 target throughout.
+
+## 2026-08-27 · Capture flow — Vision OCR, camera/library, 21+ gate (Week 1)
+- `AppTarget/Infrastructure/VisionTextRecognizer.swift` implements `TextRecognizer` with
+  `VNRecognizeTextRequest` (`.accurate`, on-device), decoding PNG → `CGImage` → observations off the
+  main thread. Contains the `CapturedImage(uiImage:)` bridge (PNG-encoded so EXIF orientation is baked
+  in and text isn't read rotated).
+- New pure `CoreModel/TextObservation.swift` (`TextObservation` + normalized `TextBox`, Vision's
+  bottom-left origin) and `CoreServices/LineAssembler.swift` (groups OCR boxes into visual rows,
+  top-to-bottom, joined left-to-right — reunites a name with its separately-recognized price). Both
+  Foundation-free and unit-tested (`LineAssemblerTests`) so the make-or-break geometry is provable.
+- `AppTarget/Features/Capture/` (`CameraPicker` over `UIImagePickerController`; `CaptureHomeView`
+  with camera + `PhotosPicker` library + sample fallback → `viewModel.load(lines:)`), the informational
+  **21+ gate** (`Features/AgeGate/AgeGateView`, `@AppStorage`, R3), and `App/RootView` gating into
+  `CaptureHomeView`. `Info.plist` needs `NSCameraUsageDescription`.
+- The value engine is unchanged — only the *source* of the OCR lines is new (design seam held).
+
+## 2026-08-27 · Editable results — session layer over the pure pipeline
+- New pure `CoreServices` types: `EditableDrink` (identity-bearing, mutable view of an enriched drink),
+  `DrinkResolver` (single enrichment path shared by pipeline + session), and `MenuSession` (holds one
+  menu's drinks; `rankedDrinks` mirrors `ValueRanker` ordering but preserves `id`; mutating
+  `correctABV`/`correctSize`/`setPrice`). `MenuPipeline` gained `makeSession(lines:metric:)`; `analyze`
+  was refactored to route through the session (output parity verified). Both invariants survive editing.
+- `AppTarget/Features/Results/` (`ResultsViewModel` — thin `@MainActor` shell over `MenuSession`;
+  `ResultsView` — ranking with badges, tap-to-correct sheet, add-a-price rows). `load(lines:)` is the
+  reusable seam the capture flow feeds. Tests: `DrinkResolverTests`, `MenuSessionTests`.
+
 ## 2026-08-25 · Phase 5 + demo app — end-to-end, on device
 - `MenuParser` (section-state machine): price/ABV/size scanning, header-price inheritance (Change A),
   description-line suppression (Finding 4); Foundation-free, no regex. Bounded v1 (R1: OCR is assist).

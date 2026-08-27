@@ -16,10 +16,10 @@ each carrying whether it was **read** off the menu or **estimated**. Everything 
 producing a list of these and sorting it.
 
 **The two flows:**
-1. **Capture** — photo → OCR lines → parse `{name, price, size?}` → enrich estimated
-   ABV/size → `[DrinkOption]`.
-2. **Ranking** — `[DrinkOption]` → compute the value metric → sort best-first → present,
-   estimates flagged and one-tap correctable.
+1. **Capture** — photo → OCR text boxes → **assemble** into lines/columns (`LineAssembler`) →
+   parse `{name, price, size?}` → enrich estimated ABV/size → `[EditableDrink]` in a `MenuSession`.
+2. **Ranking** — the session ranks by the value metric → present best-first, estimates flagged and
+   one-tap correctable, prices editable, and drinks addable/removable by hand.
 
 **The two load-bearing invariants:**
 - **Price is never fabricated** — a line with no readable price drops to a `needsPrice`
@@ -37,8 +37,8 @@ producing a list of these and sorting it.
 | **Model** | `Core/Sources/CoreModel` | nothing | `DrinkOption` spine + `Provenance<T>` + units | ✅ Phase 2 |
 | **Contracts** | `Core/Sources/CoreContracts` | CoreModel | Protocols the shell implements: OCR, beverage knowledge, purchases, ads (+ the pure `StaticBeverageKnowledge`) | ✅ Phase 3 |
 | **Services (pure)** | `Core/Sources/CoreServices` | CoreModel/CoreContracts | Parse → items; estimate ABV/size; compute + sort the value metric | ✅ Phases 4–5 |
-| **Features (UI)** | `AppTarget/` | Core | Results screen demo (sample menus, no camera yet) | ◑ demo app |
-| **Infrastructure (shell)** | `AppTarget/Sources/Infrastructure` | Core (protocols) | Vision, RevenueCat, RevenueCat Ads — the only impure code | ⏳ Week 2 |
+| **Features (UI)** | `AppTarget/Features` | Core | Capture (camera/library), editable Results (correct, price, add/remove), 21+ gate | ✅ Week 1 |
+| **Infrastructure (shell)** | `AppTarget/Infrastructure` | Core (protocols) | Vision OCR ✅ ; RevenueCat + Ads ⏳ Week 2 | ◑ |
 
 **Dependency direction points down only.** `CoreServices` never imports Vision or
 RevenueCat; it depends on the *protocols* in `CoreContracts`, and the shell supplies the
@@ -63,6 +63,8 @@ no SwiftUI/UIKit/Vision import.
   - `PricedDrink.swift` — ranker input; `init?` refuses `.nonAlcoholic` (Change B).
   - `RankedDrink.swift` — ranker output holder (value + rank).
   - `ValueMetric.swift` — `.standardDrinksPerDollar` (v1) + `.caloriesPerDollar` (v2).
+  - `TextObservation.swift` — pure `TextObservation` + normalized `TextBox` (Vision's bottom-left
+    origin). The OCR handoff type; lets `LineAssembler` be tested without Vision.
 - **`Sources/CoreContracts/`** ✅ Phase 3 — four protocols + default knowledge + doubles:
   - `TextRecognizer.swift` — protocol + `CapturedImage` (Foundation-free photo handle).
   - `BeverageKnowledge.swift` — protocol + `BeverageProfile` + `EstimateSource`
@@ -72,19 +74,33 @@ no SwiftUI/UIKit/Vision import.
     each flagged by `EstimateSource` (see `docs/BeverageDataSources.md`).
   - `GeneratedBrandTable.swift` — AUTO-GENERATED 161-brand table (do not hand-edit).
   - `TestDoubles.swift` — `FakeTextRecognizer`, `InMemoryPurchaseController` (actor), `NoopAdPresenter`.
-- **`Sources/CoreServices/`** ✅ — the pure pipeline:
+- **`Sources/CoreServices/`** ✅ — the pure pipeline + editable session:
+  - `LineAssembler.swift` — `[TextObservation] → [String]`. **Column detection** (central-gutter
+    histogram, guarded against single-column false-splits) then per-column row assembly, top-to-bottom,
+    joined left-to-right. Reunites a name with its separately-recognized price (R1).
   - `MenuParser.swift` — section-state machine: price/ABV/size scanning, header-price inheritance
-    (Change A), description-line suppression (Finding 4). Foundation-free (no regex).
+    (Change A), description-line suppression (Finding 4), `cleanName` (strips `ABV x%`/size/dash from
+    names), `drafts`/`draft`/`cans` headers. Foundation-free (no regex).
   - `ABVEstimator.swift` / `SizeEstimator.swift` — read-if-printed, else estimate via the profile.
-  - `ValueRanker.swift` — the metric + sort (§7).
-  - `MenuPipeline.swift` — end-to-end `[String] → MenuAnalysis` (ranked + needsPrice + excluded NA).
+  - `ValueRanker.swift` — the metric + sort (§7). `value(of:metric:)` is reused by the session.
+  - `MenuPipeline.swift` — `[String] → MenuAnalysis` (one-shot) **and** `makeSession(lines:metric:)`
+    for the interactive path; `analyze` routes through the session for parity.
+  - `DrinkResolver.swift` — the single enrichment path (`MenuItem` → enriched `EditableDrink` or
+    excluded-NA), shared by pipeline and session so both agree.
+  - `EditableDrink.swift` — identity-bearing (`id`), mutable view of an enriched drink; `price` still
+    the one never-fabricated axis (§10), `pricedDrink` is `nil` until priced.
+  - `MenuSession.swift` — holds one menu's `[EditableDrink]`; `rankedDrinks` mirrors `ValueRanker`
+    ordering but preserves `id`; mutating `correctABV`/`correctSize`/`setPrice`/`addDrink`/`removeDrink`.
+    Both invariants (§10, Change B) survive every edit.
 - **`Tests/CoreModelTests/`** ✅ — mirrors CoreModel 1:1 (§8).
 - **`Tests/CoreContractsTests/`** ✅ — `ContractsSmokeTests` (the doubles),
   `StaticBeverageKnowledgeTests` (chart hits, fallback flagging), `BrandTableTests` (brand
   specificity, NA-brand detection, section refinement).
-- **`Tests/CoreServicesTests/`** ✅ — `ValueRankerTests`, `MenuParserTests` (price formats,
-  header-price inheritance, needsPrice, description suppression, printed ABV), `MenuPipelineTests`
-  (end-to-end ranking + buckets).
+- **`Tests/CoreServicesTests/`** ✅ — `ValueRankerTests`, `MenuParserTests`, `MenuPipelineTests`,
+  plus the capture/edit additions: `LineAssemblerTests` + `LineAssemblerColumnTests` (row + column
+  assembly, no cross-column merge, single-column not split), `MenuParserHardeningTests` (name-cleanup,
+  `drafts`/`cans`, end-to-end two-column "no chimera"), `DrinkResolverTests`, `MenuSessionTests`
+  (correction/add-price re-ranks; invariants hold), `MenuSessionManualEntryTests` (add/remove).
 
 ### `Tooling/`
 
@@ -95,12 +111,21 @@ no SwiftUI/UIKit/Vision import.
 - **`Data/beverages.json`** ✅ — the brand → ABV/category dataset (script-readable source of truth).
 - **`Fixtures/`** ✅ — transcribed real-menu OCR lines + `INSPECTION_FINDINGS.md` (§5).
 
-### `AppTarget/` ◑ demo app
+### `AppTarget/` ✅ Week 1 — capture → editable results (on device)
 
-A minimal SwiftUI app that runs the real `MenuPipeline` on bundled sample menus (no camera yet).
-`BangForBuckApp.swift`, `ContentView.swift`, `SampleMenus.swift`, and `HOW_TO_RUN.md` (create the
-app shell in Xcode, add the local `Core` package, run on device). Camera/Vision + the full
-Features/Infrastructure split is the next step.
+- **`App/`** — `BangForBuckApp` (entry) → `RootView` (`@AppStorage` 21+ gate → capture). `ContentView`
+  / `SampleMenus` linger as a sample fallback; superseded by `RootView` + `CaptureHomeView`.
+- **`Features/AgeGate/AgeGateView.swift`** — informational 21+ confirmation, once (R3).
+- **`Features/Capture/`** — `CameraPicker` (`UIImagePickerController` wrapper; needs
+  `NSCameraUsageDescription`), `CaptureHomeView` (camera + `PhotosPicker` library + sample →
+  `viewModel.load(lines:)` → navigate to Results).
+- **`Features/Results/`** — `ResultsViewModel` (thin `@MainActor` shell over `MenuSession`;
+  `load(lines:)` is the OCR seam) and `ResultsView` (ranking with badges/chips, tap-to-edit sheet for
+  price/ABV/size + remove, "Not sure about these" bucket with add-price/remove, "+" add-a-drink sheet,
+  calculation explainer).
+- **`Infrastructure/VisionTextRecognizer.swift`** — `TextRecognizer` via `VNRecognizeTextRequest`
+  (on-device), PNG → `CGImage` → `[TextObservation]` → `LineAssembler`. Holds the `CapturedImage(uiImage:)`
+  bridge. The only impure code so far; RevenueCat purchases + ads land here in Week 2.
 
 ### `docs/`
 

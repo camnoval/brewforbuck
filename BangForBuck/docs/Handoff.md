@@ -5,6 +5,39 @@ here — keep this lean. Newest note on top; each new note says plainly what it 
 
 ---
 
+## 2026-08-27 — Capture flow live on device; results editable; OCR hardened
+
+*Supersedes the notes below re: current state and next step.*
+
+**State:** the app runs end-to-end on device. Point the camera (or pick from the library) → Apple
+**Vision** OCR (`VisionTextRecognizer` behind `TextRecognizer`) → `LineAssembler` reassembles rows
+(and now **columns**) → `MenuParser` → `MenuSession` → a ranked, **editable** list behind a 21+ gate.
+Estimates are one-tap correctable, prices are editable, priceless/low-confidence lines sit in a **"Not
+sure about these"** bucket, and the user can **add a drink the scan missed** or **remove** a misread
+one. Results now show the menu price alongside a clearly-labelled per-standard-drink cost, with a
+formulas explainer.
+
+**Verify (engine):** `cd Core && swift test` — now also covers `LineAssembler` column detection,
+`MenuParser` name-cleanup + `drafts`/`cans` headers, the editable `MenuSession`, and manual add/remove.
+**Run (app):** build `AppTarget` in Xcode against the local `Core` package; needs
+`NSCameraUsageDescription` in `Info.plist`. iOS 16 target.
+
+**R1 status:** OCR is materially better — two-column layouts split correctly and item names are clean.
+Still bounded v1: genuine 3+ column or free-form layouts fall back to fewer columns, and the manual
+add/edit path remains the safety net. Tunable knob if rows merge/over-split on a specific photo:
+`LineAssembler.lines(rowToleranceFraction:)` (default 0.5).
+
+**Next — monetization (Week 2):** RevenueCat `remove_ads` IAP + RevenueCat Ads, implemented in
+`AppTarget/Infrastructure/` behind the existing `PurchaseController` / `AdPresenter` contracts — no
+`CoreServices` change. Owner-only setup first: App Store Connect record, RevenueCat project +
+`remove_ads` product, ad-network alcohol-policy check (R3). Then the App Store listing (informational
+price-comparison framing, 21+ gate already in place) and submission with a resubmit buffer (R5).
+
+**Icon:** iOS uses a 1024×1024 PNG in `Assets.xcassets/AppIcon` (single-size), not `.ico` — flatten
+any alpha before shipping (App Store rejects alpha).
+
+---
+
 ## 2026-08-25 — Phase 5 + demo app landed (end-to-end)
 
 *Supersedes the notes below re: current state and next step.*

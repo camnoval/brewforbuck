@@ -14,10 +14,16 @@ without bloating the code. Keep this open next to the code.*
 real menu, nothing downstream matters.
 **Counter-case:** Apple Vision on-device text recognition handles clean printed menus well,
 and we don't need perfect reads — a partial read plus fast manual edit is still useful.
-**Mitigation + trigger:** ship a fast **manual add / edit** path from day one and treat OCR
+**Mitigation + trigger:** ship a fast **manual add / edit / remove** path from day one and treat OCR
 as "assist," not "only way in." Design the parser against **transcribed real-menu
 fixtures** (§5, §8), not remembered formatting. *Trigger:* if a real menu parses < ~70% of
 priced lines, prioritize the manual-entry UX over parser cleverness.
+**Progress (2026-08-27):** first on-device scan of a two-column bar menu exposed the single-column
+`LineAssembler` gluing left+right items together. Fixed with pre-parse **column detection** (gutter
+histogram, guarded against single-column false-splits), plus name-cleanup (`ABV x%`/size stripped
+from names) and `drafts`/`cans` header recognition — all pure and unit-tested. **Residual:** genuine
+3+ column or free-form layouts still fall back to fewer columns; the manual add/remove path (now
+shipped) is the backstop. Bring failing photos + their OCR lines to tune `LineAssembler`/`MenuParser`.
 
 ## R2 — Estimates can be badly wrong · **Trust**
 **Threatens:** user trust in the ranking (craft cocktails, unknown pours, house wine).

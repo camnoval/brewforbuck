@@ -28,10 +28,12 @@ and its provenance wrapper, you understand the app.
 
 **The two flows:**
 
-1. **Capture flow** — photo → OCR text lines → parse into `{name, price, maybe size}` →
-   enrich with estimated ABV/size where the menu didn't say → `[DrinkOption]`.
-2. **Ranking flow** — `[DrinkOption]` → compute the value metric → sort best-to-worst →
-   present, with estimated values visibly flagged and one-tap correctable.
+1. **Capture flow** — photo → OCR text boxes → `LineAssembler` reassembles them into
+   lines/columns → parse into `{name, price, maybe size}` → enrich with estimated ABV/size
+   where the menu didn't say → an editable `MenuSession` of drinks.
+2. **Ranking flow** — the session computes the value metric → sorts best-to-worst → present,
+   with estimated values visibly flagged and one-tap correctable, prices editable, and drinks
+   addable/removable by hand.
 
 **The two load-bearing rules** (the invariants everything else protects):
 
@@ -118,11 +120,16 @@ interface. That's the modularity test from the conventions doc.
 
 ## §7. Pure core / impure shell
 
-All four services are **pure** — no I/O, no framework, deterministic, fast, fixture-tested:
+All these services are **pure** — no I/O, no framework, deterministic, fast, fixture-tested:
 
+- **`LineAssembler`** — `[TextObservation] (OCR boxes) -> [String]`. Vision returns many small
+  boxes in no reading order and often splits one menu row (name left, price right); this detects
+  columns (two-column menus are common) and assembles each column into ordered lines so the parser
+  sees one item per line. Pure/geometry-only, tested against synthetic boxes (R1).
 - **`MenuParser`** — `[String] (OCR lines) -> [MenuItem]`. Detects a price on a line
-  (currency regex), pulls the name, and opportunistically detects an explicit size
-  ("16 oz", "pint") or an explicit ABV ("5.5% ABV") when the menu prints them. Lines with
+  (no regex — char scanning), pulls and **cleans** the name (strips embedded `ABV x%`/size), and
+  opportunistically detects an explicit size ("16 oz", "22oz.") or ABV ("5.5% ABV") when printed.
+  Section-state machine (Change A); recognizes `drafts`/`cans`/`bottles`/… headers. Lines with
   no price → a `needsPrice` bucket, never dropped silently.
 - **`ABVEstimator`** — `MenuItem -> Provenance<Double>`. If the menu printed an ABV, it's
   `.read`. Otherwise map the name/category to a typical ABV via `BeverageKnowledge` and
@@ -132,6 +139,10 @@ All four services are **pure** — no I/O, no framework, deterministic, fast, fi
 - **`ValueRanker`** — `[DrinkOption] -> [RankedDrink]`, sorted best value first. Pure math
   (formulas below). Items in the `needsPrice` bucket are excluded from the ranking by
   construction, satisfying the price invariant.
+- **`MenuSession`** — the interactive layer over the above: holds one menu's `[EditableDrink]`
+  (each with a stable `id`), re-ranks on read using the same `ValueRanker` math, and exposes pure
+  edits — correct an estimate, set a price, add a missed drink, remove a misread one. Every edit
+  preserves both invariants (a manual add is forced alcoholic; a price is still never fabricated).
 
 The shell (`VisionTextRecognizer`, `RevenueCatPurchases`, `RevenueCatAds`) is thin wiring
 that adapts a framework to a protocol. It's the only code that can't run in a plain unit

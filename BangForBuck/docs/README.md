@@ -22,7 +22,9 @@ Or run the full pre-flight gate:
 ./Tooling/run_checks.sh
 ```
 
-The iOS app (`AppTarget/`, Week 1+) opens in Xcode on macOS and depends on `Core`.
+The iOS app (`AppTarget/`) — camera/library → Vision OCR → editable, ranked results behind a 21+
+gate — opens in Xcode on macOS against the local `Core` package (needs `NSCameraUsageDescription`;
+iOS 16+). Monetization (RevenueCat) is the Week 2 step.
 
 ## Where to go next
 

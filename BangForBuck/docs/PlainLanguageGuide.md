@@ -10,11 +10,15 @@ photo of the menu and instantly see the drinks ranked from best value to worst.
 
 ## How you'll use it
 
-1. Point your phone at the drink menu and take a picture.
+1. Point your phone at the drink menu and take a picture (or pick one from your photos).
 2. The app reads the menu and lists the alcoholic drinks.
-3. It ranks them by how much alcohol you get per dollar, best deal first.
+3. It ranks them by how much alcohol you get per dollar, best deal first. It measures this in
+   "standard drinks" — a standard drink is a fixed amount of pure alcohol (the amount in a normal
+   12 oz beer), so a big weak pour and a small strong one can be compared fairly. Each drink shows
+   both its menu price and what that works out to *per standard drink*.
 4. Anything it had to guess (like the strength of a cocktail or the size of a pour) is
-   clearly marked, and you can tap to correct it.
+   clearly marked, and you can tap to correct it — including the price.
+5. If it missed a drink, you can add it by hand; if it misread something, you can remove it.
 
 A later version will also let you rank by calories per dollar.
 
