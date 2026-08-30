@@ -5,6 +5,116 @@ here — keep this lean. Newest note on top; each new note says plainly what it 
 
 ---
 
+## 2026-08-30 (part 3) — Real-menu testing: root-caused the multi-column failure
+
+*Tested the build against 5 real menu photos. Only Southside "worked" — and even it was silently
+broken (see below). This entry supersedes the R1 status in part 1.*
+
+**The big finding: Vision merges columns before Core sees them.** On a two-column menu Apple Vision
+reads straight across the gutter and returns each *physical row* as one line observation — so a
+left-column draft and a right-column bottle arrive fused ("COORS LIGHT … 5 BUDWEISER ABV 5%"). No
+amount of `LineAssembler` column logic can split a box that already contains both columns' text. This
+is why every multi-column menu produced chimera rows (Southside's ranked list looked plausible but
+every entry was two drinks mashed together; the Reservoir fused DOMESTIC with IMPORT).
+
+**Fix — word-level bounding boxes (`VisionTextRecognizer`).** Instead of one observation per Vision
+line, we now emit one per **word** via `candidate.boundingBox(for: range)`, with a whole-line
+fallback if per-word geometry is unavailable. This restores the true x-positions, the inter-column
+gutter reappears, and the existing X-Y cut separates the columns; `LineAssembler` rejoins words on a
+row by vertical position. Shell code — **compile/behavior only verifiable on device.** Pure-side
+proof: `LineAssemblerColumnTests.testWordLevelBoxesKeepTwoColumnsApart` feeds word-level boxes for a
+Southside-like layout and asserts no cross-column fusion. NOTE residual risk: right-aligned prices
+create a coverage-0 "canyon" between names and prices within a column that can rival a narrow
+inter-column gutter; the widest+central heuristic handled every test case but watch real dumps.
+
+**Parser fixes (pure, tested — `MenuParserSectionTests`):**
+- **Dotted section totals** ("COCKTAILS........$13"): `sectionHeader` now treats a dot-leader run
+  (2+ '.') like a pipe, so the price becomes the section header price and the drinks under it inherit
+  it (fixes Exclusive Drink Menu, where WINES had become a $50 item and the cocktails fell to
+  needsPrice). `hasDotLeaderRun` added.
+- **Singular headers**: added DOMESTIC/IMPORT/CIDER/SELTZER to the lexicon (the Reservoir). Safe
+  because the price guard still rejects priced item lines as headers.
+- **`/` separator**: `replaceSeparators` now maps `/`→space, so "Miller High Life 16oz / 6" prices
+  and cleans correctly.
+- **N/A exclusion**: `looksNonAlcoholic` flags "N/A", "non-alcoholic", "zero proof" (NOT bare "zero" —
+  "Mike's Zero Sugar" is alcoholic) on the raw line and tags the item `.nonAlcoholic`; `DrinkResolver`
+  now hard-excludes any `.nonAlcoholic` item up front, before brand/style matching can re-rank it
+  (fixes "Gruvi IPA N/A beer" ranking as a 6.5% IPA).
+
+**Still limited:** angled/rotated photos (El Perrito) — Vision's axis-aligned word boxes get a
+sloped baseline, so rows mis-group and OCR text degrades ("Sauza blanco, Cointreau, fresh" →
+"chu8 blanco Cointreau tresh"). Guidance: shoot straight-on. The dense M/G menu is still hard.
+
+**Next:** rebuild, re-scan the 5 menus. The DEBUG long-press OCR export now dumps **word-level**
+observations — send those for any menu still failing and they become fixtures directly.
+
+---
+
+## 2026-08-30 — N-column OCR + multi-price rows; store-calculator pure core landed
+
+*Supersedes the 08-27 note re: R1 column bound and re: the calculator being unstarted. Everything
+here is pure `Core` code with `swift test` coverage; two shell pieces are deliberately deferred
+(below).*
+
+**Robustness (Goal 1, R1):**
+- **`LineAssembler` now does a recursive X-Y cut** (was 1-or-2 column only). Handles 1/2/3/4-column
+  and free-form layouts; splits at truly-empty corridors, suppressing spanning **headers/titles**
+  from gutter detection (a full-width title no longer bisects the middle column), with a central
+  fallback for a 2-column gutter bridged by a modest title. Guards (per-side count ≥ 3, span ≥ 0.18)
+  still guarantee it never over-splits a single column at a name/price gap. Validated in Python
+  against 7 layouts before porting; new tests: `testThreeColumnSplit`, `testFourColumnSplit`,
+  `testSingleWideColumnNotSplit`, `testThreeColumnsUnderFullWidthTitle`. Added `TextBox.width`.
+- **Multi-price rows → one ranked drink per size** (Decision, supersedes INSPECTION_FINDINGS §5's
+  "smallest pour"). `MenuParser.splitMultiPrice` turns "Cabernet glass $9 bottle $32" into two items
+  and "Bud Light 12oz $4 16oz $6 22oz $8" into three, each with its own price + size, ranked
+  separately. Binds a size label before **or** after its price; two-price wine with no cue → smaller
+  glass / larger bottle. Fires only on ≥2 `$`-prices, else the single-price path is untouched. Each
+  emitted item carries a real `Price`, so the price invariant holds. Tests:
+  `MenuParserMultiPriceTests`.
+
+**Store calculator (Goal 2) — pure core done, UI deferred.** Per the design decision it's a
+**separate** type sharing only the value formula:
+- `ValueRanker.standardDrinks(sizeFloz:abvPercent:)` is now the one shared ethanol→standard-drinks
+  primitive (the `PricedDrink` path delegates to it).
+- `StoreComparison.swift` (new, CoreServices): `StoreProduct` (unitVolume × count, abv, packagePrice
+  as a failable `Price`), `StoreComparison.rank` → `[RankedProduct]` sorted by standard-drinks-per-
+  dollar, also surfacing **$/standard drink**; zero-alcohol sorts last without div-by-zero.
+  `ContainerSize.presets` (12/16/19.2/24/25 oz, 187/375/500/750 mL, 1/1.5/1.75 L) for the picker.
+- `BrandCatalog.all` (new, CoreContracts): public `[KnownBeverage]` (label/category/abv, alphabetical,
+  de-duped) projecting the internal `generatedBrandTable` for the brand dropdown.
+- `Volume` gained a pure `liters` bridge. Tests: `StoreComparisonTests`, `BrandCatalogTests`.
+
+**Deferred to next session (shell-only, not sandbox-testable — need device + visual iteration):**
+1. **`AppTarget/Features/Compare/`** SwiftUI screen: add-product form (brand dropdown from
+   `BrandCatalog.all`, size from `ContainerSize.presets`, count/abv/price fields) → `StoreComparison`
+   ranked list reusing `ResultsView`'s `RankRow`/chips; entry point button/tab on `RootView`.
+2. **Token/OCR-noise + per-line confidence** pass (price ranges, O↔0, more size spellings, header
+   lexicon, low-confidence → "Not sure" bucket) — now unblocked by the export affordance below; do it
+   fixture-by-fixture against real dumps.
+
+**OCR-export debug affordance — DONE (this session, part 2).** `ObservationFixture` (new, CoreServices,
+pure + tested) serializes `[TextObservation]` into a paste-ready Swift literal for a `LineAssembler`
+test plus a readable dump (positions + current assembled lines). Shell: `VisionTextRecognizer` now
+exposes `recognizeObservations(in:)`; `CaptureHomeView` keeps the last scanned image and, in **DEBUG
+only**, a 0.8s **long-press on the menucard logo** re-runs Vision and opens `OCRDebugExportSheet`
+(share/copy). Release builds don't include the trigger.
+
+**Workflow for the ~5 sample-menu photos (how to turn them into regression tests):**
+1. In a DEBUG build, scan/pick a photo, then long-press the logo → Share/Copy the export.
+2. Paste the `let observations: [TextObservation] = [...]` block into a new test in
+   `LineAssemblerColumnTests.swift` (or a per-menu file); assert `LineAssembler.lines(from:)` groups
+   the rows/columns correctly — this is what locks in the X-Y-cut behavior against real geometry.
+3. The dump's "LineAssembler.lines output" section shows the current result, so a bad split is
+   visible immediately and tells you whether it's a column bug (fix `LineAssembler`) or a parse/size
+   bug (fix `MenuParser`). Feed recurring OCR noise into the deferred token-noise pass (#2 above).
+
+**Verify:** `cd Core && swift test` (all new tests are pure/inline-fixture). Files touched:
+`CoreModel/TextBox.swift`, `CoreModel/Volume.swift`, `CoreServices/LineAssembler.swift`,
+`CoreServices/MenuParser.swift`, `CoreServices/ValueRanker.swift`, `CoreServices/StoreComparison.swift`
+(new), `CoreContracts/BrandCatalog.swift` (new), + 4 test files.
+
+---
+
 ## 2026-08-27 — Capture flow live on device; results editable; OCR hardened
 
 *Supersedes the notes below re: current state and next step.*

@@ -25,8 +25,15 @@ struct VisionTextRecognizer: TextRecognizer {
     enum RecognizerError: Error { case invalidImageData }
 
     func recognizeLines(in image: CapturedImage) async throws -> [String] {
-        let observations = try await recognizeObservations(pngBytes: image.pngData)
-        return LineAssembler.lines(from: observations)
+        LineAssembler.lines(from: try await recognizeObservations(in: image))
+    }
+
+    /// The raw observations before line assembly — the seam the debug OCR-export affordance taps to
+    /// turn a mis-scanned photo into a `LineAssembler` fixture. Same Vision pass as `recognizeLines`.
+    /// Spelled with the fully-qualified type because the file-private `TextObservation` typealias
+    /// can't appear in an internal method's signature.
+    func recognizeObservations(in image: CapturedImage) async throws -> [CoreModel.TextObservation] {
+        try await recognizeObservations(pngBytes: image.pngData)
     }
 
     /// Decode + run Vision on a background queue so a large photo never blocks the main thread; the
@@ -45,16 +52,42 @@ struct VisionTextRecognizer: TextRecognizer {
                         return
                     }
                     let results = (request.results as? [VNRecognizedTextObservation]) ?? []
-                    let observations: [TextObservation] = results.compactMap { result in
-                        guard let text = result.topCandidates(1).first?.string else { return nil }
-                        let box = result.boundingBox   // normalized, origin bottom-left
-                        return TextObservation(
-                            text: text,
-                            box: TextBox(
-                                minX: Double(box.minX), minY: Double(box.minY),
-                                maxX: Double(box.maxX), maxY: Double(box.maxY)
-                            )
-                        )
+
+                    // Emit ONE observation per word, with that word's own bounding box, rather than
+                    // one per Vision line. Vision groups text by baseline and will read straight
+                    // across a two-column menu, returning a left-column item and a right-column item
+                    // fused into a single line observation — which then reaches the parser as one
+                    // chimera row ("COORS LIGHT … 5 BUDWEISER …"). Per-word boxes (via
+                    // `boundingBox(for:)`) restore the true x-positions, so the empty gutter between
+                    // columns reappears and `LineAssembler`'s X-Y cut can separate them. Words on the
+                    // same row are rejoined there by vertical position, reproducing the original line.
+                    var observations: [TextObservation] = []
+                    for result in results {
+                        guard let candidate = result.topCandidates(1).first else { continue }
+                        let string = candidate.string
+                        var wordCount = 0
+                        for range in Self.wordRanges(in: string) {
+                            let word = String(string[range])
+                            if word.isEmpty { continue }
+                            let boxObservation = try? candidate.boundingBox(for: range)
+                            guard let rect = (boxObservation ?? nil)?.boundingBox else { continue }
+                            observations.append(TextObservation(
+                                text: word,
+                                box: TextBox(minX: Double(rect.minX), minY: Double(rect.minY),
+                                             maxX: Double(rect.maxX), maxY: Double(rect.maxY))
+                            ))
+                            wordCount += 1
+                        }
+                        // Fallback: if per-word geometry wasn't available, keep the whole-line box so
+                        // no text is ever dropped (single-column menus are unaffected either way).
+                        if wordCount == 0 {
+                            let box = result.boundingBox
+                            observations.append(TextObservation(
+                                text: string,
+                                box: TextBox(minX: Double(box.minX), minY: Double(box.minY),
+                                             maxX: Double(box.maxX), maxY: Double(box.maxY))
+                            ))
+                        }
                     }
                     continuation.resume(returning: observations)
                 }
@@ -71,5 +104,20 @@ struct VisionTextRecognizer: TextRecognizer {
                 }
             }
         }
+    }
+
+    /// Split a recognized string into per-word index ranges (on spaces). The ranges index into the
+    /// candidate's own string, which is what `boundingBox(for:)` requires.
+    private static func wordRanges(in s: String) -> [Range<String.Index>] {
+        var ranges: [Range<String.Index>] = []
+        var i = s.startIndex
+        while i < s.endIndex {
+            while i < s.endIndex, s[i] == " " { i = s.index(after: i) }
+            guard i < s.endIndex else { break }
+            let start = i
+            while i < s.endIndex, s[i] != " " { i = s.index(after: i) }
+            ranges.append(start..<i)
+        }
+        return ranges
     }
 }

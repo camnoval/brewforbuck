@@ -13,9 +13,12 @@ import CoreModel
 ///      single line the parser expects.
 ///
 /// Pure and Foundation-free so this make-or-break heuristic is unit-testable against synthetic boxes
-/// (the impure `VisionTextRecognizer` supplies real ones). Bounded v1 (R1): it handles one- and
-/// two-column layouts; genuine 3+ column or free-form layouts fall back gracefully to fewer columns,
-/// with the manual add/edit path as the safety net.
+/// (the impure `VisionTextRecognizer` supplies real ones). Column detection is a **recursive X-Y
+/// cut** (R1): it repeatedly splits at the best vertical gutter, so one-, two-, three- and
+/// four-column menus all assemble without fusing a left item to a right one. Genuinely free-form or
+/// very tight layouts still degrade gracefully to fewer columns, with the manual add/edit path as
+/// the safety net; the guards below guarantee it never over-splits a single column at a name/price
+/// gap and never bisects a column bridged by a spanning title.
 public enum LineAssembler {
 
     /// Assemble ordered lines. `rowToleranceFraction` is how close two boxes' vertical centers must
@@ -27,63 +30,143 @@ public enum LineAssembler {
         let cleaned = observations.filter { !trimmed($0.text).isEmpty }
         guard !cleaned.isEmpty else { return [] }
 
-        // Left column fully, then right column — headers stay with their own column's items.
+        // Columns left-to-right, each fully assembled before the next — headers stay with their
+        // own column's items.
         return columnGroups(cleaned).flatMap { column in
             assembleRows(column, rowToleranceFraction: rowToleranceFraction)
         }
     }
 
-    // MARK: - Column detection
+    // MARK: - Column detection (recursive X-Y cut)
 
-    /// Split observations into 1 or 2 columns by finding a low-coverage vertical **gutter** near the
-    /// page center. Robust to a centered title/footer that spans the gutter (those only nudge the
-    /// gutter's coverage up a little, not to column density), and guarded against mistaking the
-    /// intra-row gap between a name and its right-aligned price for a real column boundary.
+    private static let bins = 100
+    /// A resulting column must span at least this fraction of page width — rejects a single column
+    /// whose right-aligned prices cluster into a too-narrow pseudo-column, and rejects splitting a
+    /// column at the gap between its names and its prices.
+    static let minColumnSpan = 0.18
+    /// Each side of a split needs at least this many observations to be a real column.
+    static let minSideCount = 3
+    /// Below this many observations there's nothing worth splitting.
+    static let minGroupToSplit = 6
+    /// Guard comparisons on normalized coordinates sit exactly on `minColumnSpan` for evenly-spaced
+    /// layouts; a tiny epsilon keeps a `Double` tie from failing the guard.
+    static let spanEpsilon = 1e-9
+    /// For **gutter detection only**, a box wider than this is treated as a spanning header/title:
+    /// it's dropped from the coverage histogram so a title stretched across a gutter can't hide it.
+    /// The box is still assigned to a column and still counts toward the column-span guards.
+    static let headerWidthFraction = 0.45
+
+    /// Partition observations into columns by recursively cutting at the best vertical gutter.
+    /// Returns `[observations]` unchanged when no defensible cut exists (single column).
     static func columnGroups(_ observations: [TextObservation]) -> [[TextObservation]] {
-        let single = [observations]
-        guard observations.count >= 8 else { return single }
+        guard let (left, right) = bestVerticalSplit(observations) else { return [observations] }
+        return columnGroups(left) + columnGroups(right)
+    }
 
-        let bins = 100
+    /// The best single vertical cut of `group`, or `nil`. Tries a clean empty-corridor cut first
+    /// (handles any number of columns), then a central-gutter fallback for a two-column page whose
+    /// gutter is bridged by a modest, non-header title.
+    static func bestVerticalSplit(
+        _ group: [TextObservation]
+    ) -> (left: [TextObservation], right: [TextObservation])? {
+        guard group.count >= minGroupToSplit else { return nil }
+        return corridorSplit(group) ?? centralSplit(group)
+    }
+
+    /// Cut at a truly-empty interior corridor. Header-width boxes are suppressed from the coverage
+    /// used to *find* corridors (so a title spanning a gutter doesn't fill it), but every box is
+    /// still partitioned and the column guards run on the full set. Among passing corridors the
+    /// widest wins, tie-broken toward the more central cut.
+    private static func corridorSplit(
+        _ group: [TextObservation]
+    ) -> (left: [TextObservation], right: [TextObservation])? {
+        var detect = group.filter { $0.box.width <= headerWidthFraction }
+        if detect.count < minSideCount * 2 { detect = group }   // too little left → use all
+        let coverage = self.coverage(of: detect)
+
+        let nonEmpty = coverage.indices.filter { coverage[$0] > 0 }
+        guard let first = nonEmpty.first, let last = nonEmpty.last, last - first >= 2 else { return nil }
+        let interiorZeros = ((first + 1)..<last).filter { coverage[$0] == 0 }
+
+        // Pick the widest passing corridor; tie-break toward the more central cut.
+        var bestLeft: [TextObservation]?
+        var bestRight: [TextObservation]?
+        var bestRunLength = -1
+        var bestCentrality = -Double.infinity   // higher = closer to center
+        for run in contiguousRuns(interiorZeros) {
+            let gutterX = center(run[run.count / 2])
+            guard let split = guardedSplit(group, at: gutterX) else { continue }
+            let centrality = -abs(gutterX - 0.5)
+            if run.count > bestRunLength
+                || (run.count == bestRunLength && centrality > bestCentrality) {
+                bestRunLength = run.count
+                bestCentrality = centrality
+                bestLeft = split.left
+                bestRight = split.right
+            }
+        }
+        guard let left = bestLeft, let right = bestRight else { return nil }
+        return (left, right)
+    }
+
+    /// Fallback for a two-column page whose gutter is bridged by a modest (non-header) title:
+    /// the lowest-coverage bin nearest the center. Only ever yields a single two-way cut.
+    private static func centralSplit(
+        _ group: [TextObservation]
+    ) -> (left: [TextObservation], right: [TextObservation])? {
+        let coverage = self.coverage(of: group)
+        let peak = coverage.max() ?? 0
+        let bandLo = Int(0.33 * Double(bins))
+        let bandHi = Int(0.67 * Double(bins))
+        let band = Array(bandLo..<bandHi)
+        guard let minCoverage = band.map({ coverage[$0] }).min() else { return nil }
+        guard peak >= 2, minCoverage <= max(1, peak / 3) else { return nil }
+
+        let gutterBin = band
+            .filter { coverage[$0] == minCoverage }
+            .min { abs(center($0) - 0.5) < abs(center($1) - 0.5) }!
+        return guardedSplit(group, at: center(gutterBin))
+    }
+
+    /// Partition `group` at `gutterX` and accept only if both sides are real columns
+    /// (enough observations AND wide enough). This is the guard that stops over-splitting.
+    private static func guardedSplit(
+        _ group: [TextObservation],
+        at gutterX: Double
+    ) -> (left: [TextObservation], right: [TextObservation])? {
+        let left = group.filter { $0.box.midX < gutterX }
+        let right = group.filter { $0.box.midX >= gutterX }
+        guard left.count >= minSideCount, right.count >= minSideCount,
+              horizontalSpan(left) >= minColumnSpan - spanEpsilon,
+              horizontalSpan(right) >= minColumnSpan - spanEpsilon
+        else { return nil }
+        return (left, right)
+    }
+
+    private static func coverage(of observations: [TextObservation]) -> [Int] {
         var coverage = [Int](repeating: 0, count: bins)
         for observation in observations {
             let lo = max(0, Int(observation.box.minX * Double(bins)))
             let hi = min(bins - 1, Int(observation.box.maxX * Double(bins)))
             if lo <= hi { for b in lo...hi { coverage[b] += 1 } }
         }
-
-        // Search a central band; among the lowest-coverage bins, take the one nearest the center
-        // (the true gutter beats a name/price gap, which sits off-center).
-        let bandLo = Int(0.33 * Double(bins))
-        let bandHi = Int(0.67 * Double(bins))
-        let band = Array(bandLo..<bandHi)
-        guard let minCoverage = band.map({ coverage[$0] }).min() else { return single }
-        let peak = coverage.max() ?? 0
-
-        // A real gutter is clearly emptier than the columns it separates. `peak` need only confirm
-        // there's *some* overlapping content; the per-column span and count guards below are what
-        // actually prevent a single column from being split at a name/price gap.
-        guard peak >= 2, minCoverage <= max(1, peak / 3) else { return single }
-
-        let gutterBin = band
-            .filter { coverage[$0] == minCoverage }
-            .min { abs(center($0, bins) - 0.5) < abs(center($1, bins) - 0.5) }!
-        let gutterX = center(gutterBin, bins)
-
-        let left = observations.filter { $0.box.midX < gutterX }
-        let right = observations.filter { $0.box.midX >= gutterX }
-
-        // Both sides must be substantial AND each must span a real column's width — this rejects a
-        // single column whose prices merely cluster to the right of their names.
-        guard left.count >= 3, right.count >= 3,
-              horizontalSpan(left) >= 0.18, horizontalSpan(right) >= 0.18
-        else { return single }
-
-        return [left, right]
+        return coverage
     }
 
-    private static func center(_ bin: Int, _ bins: Int) -> Double {
-        (Double(bin) + 0.5) / Double(bins)
+    /// Group sorted bin indices into maximal contiguous runs.
+    private static func contiguousRuns(_ sorted: [Int]) -> [[Int]] {
+        guard !sorted.isEmpty else { return [] }
+        var runs: [[Int]] = []
+        var run = [sorted[0]]
+        for b in sorted.dropFirst() {
+            if b == run.last! + 1 { run.append(b) }
+            else { runs.append(run); run = [b] }
+        }
+        runs.append(run)
+        return runs
     }
+
+    private static func center(_ bin: Int) -> Double { (Double(bin) + 0.5) / Double(bins) }
 
     private static func horizontalSpan(_ group: [TextObservation]) -> Double {
         guard let maxX = group.map({ $0.box.maxX }).max(),

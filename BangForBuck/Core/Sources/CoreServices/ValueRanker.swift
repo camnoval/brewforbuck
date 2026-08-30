@@ -34,12 +34,25 @@ public struct ValueRanker {
 
     /// Pure ethanol in the serving, in fluid ounces: size × (ABV / 100).
     static func pureEthanolFloz(_ d: PricedDrink) -> Double {
-        d.size.value.fluidOunces * (d.abv.value / 100.0)
+        pureEthanolFloz(sizeFloz: d.size.value.fluidOunces, abvPercent: d.abv.value)
     }
 
     /// US standard drinks in the serving.
     static func standardDrinks(_ d: PricedDrink) -> Double {
-        pureEthanolFloz(d) / ethanolFlozPerStandardDrink
+        standardDrinks(sizeFloz: d.size.value.fluidOunces, abvPercent: d.abv.value)
+    }
+
+    // MARK: - Shared primitive (menu ranker AND store comparison)
+
+    /// Pure ethanol (fl oz) from size and ABV alone. The one place the size×ABV rule lives.
+    public static func pureEthanolFloz(sizeFloz: Double, abvPercent: Double) -> Double {
+        max(0, sizeFloz) * (max(0, abvPercent) / 100.0)
+    }
+
+    /// US standard drinks from size and ABV alone — reused by `StoreComparison` for whole packages
+    /// (size × count) so both features score alcohol on the identical NIAAA definition.
+    public static func standardDrinks(sizeFloz: Double, abvPercent: Double) -> Double {
+        pureEthanolFloz(sizeFloz: sizeFloz, abvPercent: abvPercent) / ethanolFlozPerStandardDrink
     }
 
     /// The metric value for a drink. Higher = better value for both current metrics.

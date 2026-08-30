@@ -25,6 +25,14 @@ public enum DrinkResolver {
     ) -> (drink: EditableDrink?, excludedName: String?) {
         // A `.unknown` section gives the knowledge layer no hint; pass nil so it can fall back.
         let sectionCategory: BeverageCategory? = item.category == .unknown ? nil : item.category
+
+        // Parser-tagged non-alcoholic (a mocktail/N-A section, or an "N/A"/"non-alcoholic" marker on
+        // the line) is excluded up front — before a brand/style match could re-rank it as alcoholic
+        // (e.g. "Gruvi IPA N/A beer" matching the IPA style, or "Corona N/A" matching Corona).
+        if item.category == .nonAlcoholic {
+            return (nil, item.name)
+        }
+
         let profile = knowledge.profile(for: item.name, sectionCategory: sectionCategory)
 
         // Non-alcoholic by section or brand → excluded before the metric ever runs (Change B).

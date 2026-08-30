@@ -28,6 +28,7 @@ public struct TextBox: Equatable, Sendable {
     public var midX: Double { (minX + maxX) / 2 }
     public var midY: Double { (minY + maxY) / 2 }
     public var height: Double { maxY - minY }
+    public var width: Double { maxX - minX }
 }
 
 public struct TextObservation: Equatable, Sendable {

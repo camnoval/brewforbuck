@@ -27,6 +27,27 @@ public struct MenuParser {
                 continue
             }
 
+            // Non-alcoholic markers on the raw line (N/A, "non-alcoholic", "zero proof") force the
+            // category so a brand/style match downstream can't rank e.g. "Gruvi IPA N/A beer" as a
+            // real IPA. Checked on the raw line so the "/" in "N/A" is still intact.
+            let itemCategory = Self.looksNonAlcoholic(raw) ? .nonAlcoholic : category
+
+            // A line listing several size/price pairs (wine glass/bottle, a beer size grid) becomes
+            // one item per size, each ranked separately (Decision: one row per size). Each entry
+            // carries its own price, so none fall through to the needsPrice path below.
+            let multi = Self.splitMultiPrice(line)
+            if !multi.isEmpty {
+                let abv = Self.detectABV(line)   // ABV is usually printed once for the whole line
+                for entry in multi {
+                    items.append(MenuItem(
+                        name: entry.name, price: entry.price,
+                        readABV: abv, readSize: entry.size,
+                        category: itemCategory, descriptionText: nil
+                    ))
+                }
+                continue
+            }
+
             let parsed = Self.parseItem(line)
             let price = parsed.price ?? headerPrice
 
@@ -39,7 +60,7 @@ public struct MenuParser {
             items.append(MenuItem(
                 name: parsed.name, price: price,
                 readABV: parsed.readABV, readSize: parsed.readSize,
-                category: category, descriptionText: nil
+                category: itemCategory, descriptionText: nil
             ))
         }
         return items
@@ -52,8 +73,10 @@ public struct MenuParser {
         let lower = line.lowercased()
         let parsed = parseItem(line)
         let hasPipe = contains(line, "|")
-        // A priced line with no pipe is an item, never a header.
-        if parsed.price != nil && !hasPipe { return nil }
+        let hasDotLeader = hasDotLeaderRun(line)   // "COCKTAILS........$13" — a dotted section total
+        // A priced line is an item, never a header — UNLESS a pipe ("Elixirs | $14") or dot leaders
+        // ("COCKTAILS...$13") mark it as a section total whose items inherit the price.
+        if parsed.price != nil && !hasPipe && !hasDotLeader { return nil }
         for (keywords, cat) in headerKeywords {
             if keywords.contains(where: { contains(lower, $0) }) {
                 return (cat, parsed.price)   // header price (e.g. "Elixirs | $14") when present
@@ -62,17 +85,29 @@ public struct MenuParser {
         return nil
     }
 
+    /// True if the line contains a run of 2+ consecutive '.' (dot leaders), as printed between a
+    /// section name and its price: "COCKTAILS........$13". A single '.' (a decimal) doesn't count.
+    static func hasDotLeaderRun(_ s: String) -> Bool {
+        let chars = Array(s)
+        var i = 1
+        while i < chars.count {
+            if chars[i] == "." && chars[i - 1] == "." { return true }
+            i += 1
+        }
+        return false
+    }
+
     // Plural / multiword keywords chosen to avoid colliding with singular drink names
     // ("shots" header vs a "…Shot" item; "martinis" vs "Mexican Martini"). Ordered by priority.
     static let headerKeywords: [([String], BeverageCategory)] = [
         (["non-alcoholic", "non alcoholic", "mocktails", "booze free", "zero proof"], .nonAlcoholic),
         (["frozen cocktails", "frozen margaritas", "frozen"], .frozenCocktail),
         (["on tap", "on draught", "draught", "draft beers", "draft selections", "draft beer", "on draft", "drafts", "draft"], .draftBeer),
-        (["tall boy", "bottled beer", "bottles/cans", "bottles", "imports", "domestic beer", "domestics"], .bottledBeer),
+        (["tall boy", "bottled beer", "bottles/cans", "bottles", "imports", "import", "domestic beer", "domestics", "domestic"], .bottledBeer),
         // "cans" is a container, not a style; most canned items brand-match anyway. Weak seltzer/RTD
         // default for anything that doesn't (ABV is usually printed, so this only nudges the size).
-        (["hard seltzer", "canned cocktails", "seltzers", "cans"], .seltzer),
-        (["ciders"], .cider),
+        (["hard seltzer", "canned cocktails", "seltzers", "seltzer", "cans"], .seltzer),
+        (["ciders", "cider"], .cider),
         (["shots"], .shot),
         (["martinis", "old-fashioneds", "old fashioneds"], .martini),
         (["sangria"], .sangria),
@@ -155,6 +190,109 @@ public struct MenuParser {
         return words > 6
     }
 
+    /// Non-alcoholic markers that should exclude an item regardless of any brand/style match
+    /// ("Corona N/A", "Gruvi IPA N/A beer", "…Non Alcoholic", "Zero Proof"). Checked on the raw line.
+    /// Deliberately does NOT match bare "zero" — "Mike's Zero Sugar" and similar are alcoholic.
+    static func looksNonAlcoholic(_ raw: String) -> Bool {
+        let lower = raw.lowercased()
+        let markers = ["non-alcoholic", "non alcoholic", "n/a", "n/ a", "zero proof", "alcohol free", "alcohol-free"]
+        return markers.contains { contains(lower, $0) }
+    }
+
+    // MARK: - Multi-price lines (one item per size)
+
+    /// A drink line carrying two or more `$`-prices (e.g. "House Cabernet glass $9 bottle $32" or
+    /// "Bud Light 12oz $4 16oz $6 22oz $8") split into one entry per size, so each size ranks on its
+    /// own. Returns `[]` when the line has fewer than two `$`-prices — the single-price path then
+    /// handles it unchanged. Sizes are bound to the adjacent size token (before or after the price);
+    /// a two-price wine line with no size cues falls back to smaller = glass, larger = bottle.
+    static func splitMultiPrice(_ raw: String) -> [(name: String, price: Price, size: Volume?)] {
+        let line = collapseDotRuns(replaceSeparators(raw))
+        let tokens = line.split(separator: " ").map(String.init)
+        guard !tokens.isEmpty else { return [] }
+
+        let toks = tokens.map { classifyToken($0) }
+        let priceIdx = toks.indices.filter { toks[$0].price != nil }
+        guard priceIdx.count >= 2 else { return [] }
+
+        // Base name = the word tokens before the first size-or-price marker.
+        let firstMarker = toks.indices.first { toks[$0].price != nil || toks[$0].size != nil } ?? toks.count
+        let base = trimTrailingSeparators(trimmed(
+            (0..<firstMarker).filter { toks[$0].price == nil && toks[$0].size == nil }
+                .map { tokens[$0] }.joined(separator: " ")
+        ))
+        guard !base.isEmpty else { return [] }   // nameless (size-first) → let single-price path try
+
+        // Bind each price to an adjacent, not-yet-used size token: nearest before, else nearest after.
+        var usedSize = Set<Int>()
+        var raws: [(price: Double, size: Double?, label: String?)] = []
+        for (pi, idx) in priceIdx.enumerated() {
+            let prev = pi > 0 ? priceIdx[pi - 1] : -1
+            let next = pi < priceIdx.count - 1 ? priceIdx[pi + 1] : toks.count
+            var sIdx: Int? = nil
+            var k = idx - 1
+            while k > prev { if toks[k].size != nil && !usedSize.contains(k) { sIdx = k; break }; k -= 1 }
+            if sIdx == nil {
+                var m = idx + 1
+                while m < next { if toks[m].size != nil && !usedSize.contains(m) { sIdx = m; break }; m += 1 }
+            }
+            if let s = sIdx { usedSize.insert(s) }
+            raws.append((price: toks[idx].price!,
+                         size: sIdx.flatMap { toks[$0].size },
+                         label: sIdx.flatMap { toks[$0].label }))
+        }
+
+        // Wine fallback: exactly two prices, no size cues → smaller is a glass, larger a bottle.
+        if raws.count == 2, raws[0].size == nil, raws[1].size == nil {
+            let lo = raws[0].price <= raws[1].price ? 0 : 1
+            let hi = 1 - lo
+            raws[lo] = (price: raws[lo].price, size: 5.0, label: "glass")
+            raws[hi] = (price: raws[hi].price, size: 25.36, label: "bottle")
+        }
+
+        // Materialize; a non-positive price can't form a Price, so that entry is dropped (invariant).
+        var out: [(name: String, price: Price, size: Volume?)] = []
+        for r in raws {
+            guard let price = Price(dollars: r.price) else { continue }
+            let name = r.label.map { "\(base) (\($0))" } ?? base
+            out.append((name: name, price: price, size: r.size.map { Volume(fluidOunces: $0) }))
+        }
+        return out.count >= 2 ? out : []   // still multi only if >=2 survived
+    }
+
+    /// 750 mL bottle = 25.36 oz; 1.5 L magnum = 50.72 oz; pitcher ~ 60 oz; carafe ~ 500 mL = 17 oz.
+    static let sizeWordTable: [(word: String, ounces: Double)] = [
+        ("glass", 5), ("gls", 5), ("bottle", 25.36), ("btl", 25.36), ("bot", 25.36),
+        ("pint", 16), ("draft", 16), ("draught", 16), ("pour", 5),
+        ("pitcher", 60), ("carafe", 17), ("half", 8), ("can", 12), ("magnum", 50.72),
+    ]
+
+    /// Classify one token as a price (`$9`), a size (`12oz`, `glass`), or a plain word.
+    static func classifyToken(_ token: String) -> (price: Double?, size: Double?, label: String?) {
+        if token.hasPrefix("$"), let n = pureNumber(String(token.dropFirst())), n > 0 {
+            return (n, nil, nil)
+        }
+        let cleaned = stripEdgePunctuation(token)
+        let lower = cleaned.lowercased()
+        if lower.count >= 3, lower.hasSuffix("oz") {
+            let head = String(lower.dropLast(2))
+            if let v = Double(head), v > 0 {
+                let label = v == v.rounded() ? "\(Int(v)) oz" : "\(v) oz"
+                return (nil, v, label)
+            }
+        }
+        for entry in sizeWordTable where lower == entry.word { return (nil, entry.ounces, entry.word) }
+        return (nil, nil, nil)
+    }
+
+    static func stripEdgePunctuation(_ s: String) -> String {
+        let punct: Set<Character> = [".", ",", "|", ":", ";", "-", "–", "—", "(", ")", "/"]
+        var chars = Array(s)
+        while let f = chars.first, punct.contains(f) { chars.removeFirst() }
+        while let l = chars.last, punct.contains(l) { chars.removeLast() }
+        return String(chars)
+    }
+
     // MARK: - Scanners (Foundation-free)
 
     static func detectABV(_ raw: String) -> Double? {
@@ -203,7 +341,7 @@ public struct MenuParser {
     static func replaceSeparators(_ s: String) -> String {
         var out = ""
         for c in s {
-            if c == "•" || c == "·" || c == "…" || c == "|" { out.append(" ") } else { out.append(c) }
+            if c == "•" || c == "·" || c == "…" || c == "|" || c == "/" { out.append(" ") } else { out.append(c) }
         }
         return out
     }

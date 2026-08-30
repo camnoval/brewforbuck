@@ -29,6 +29,11 @@ struct CaptureHomeView: View {
     @State private var showResults = false
     @State private var errorMessage: String?
 
+    // Debug OCR export: keep the last scanned image so its raw observations can be dumped to a
+    // LineAssembler fixture (see ObservationFixture). Trigger is DEBUG-only (long-press the logo).
+    @State private var lastCaptured: CapturedImage?
+    @State private var exportText: String?
+
     private var cameraAvailable: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
 
     var body: some View {
@@ -39,6 +44,7 @@ struct CaptureHomeView: View {
                 Image(systemName: "menucard")
                     .font(.system(size: 52))
                     .foregroundStyle(.tint)
+                    .modifier(DebugOCRExportGesture(action: exportLastScan))
                 Text("Scan a drink menu")
                     .font(.title2).bold()
                 Text("Get the alcoholic options ranked by how much you get per dollar. Anything we estimate is flagged and you can correct it.")
@@ -95,6 +101,10 @@ struct CaptureHomeView: View {
                 CameraPicker { image in process(image) }
                     .ignoresSafeArea()
             }
+            .sheet(isPresented: Binding(get: { exportText != nil },
+                                        set: { if !$0 { exportText = nil } })) {
+                if let exportText { OCRDebugExportSheet(text: exportText) }
+            }
             .onChange(of: libraryItem) { item in
                 guard let item else { return }
                 Task { @MainActor in await loadLibrary(item) }
@@ -141,6 +151,7 @@ struct CaptureHomeView: View {
             errorMessage = "That image couldn’t be processed."
             return
         }
+        lastCaptured = captured   // for the DEBUG OCR export
         isProcessing = true
         Task { @MainActor in
             defer { isProcessing = false }
@@ -156,5 +167,38 @@ struct CaptureHomeView: View {
                 errorMessage = "Couldn’t read that image. Try a clearer, straight-on photo."
             }
         }
+    }
+
+    // MARK: - Debug OCR export
+
+    /// Re-run Vision on the last scanned image and build a paste-ready `LineAssembler` fixture from
+    /// its raw observations. Uses `VisionTextRecognizer` directly (stateless) so it exports the real
+    /// on-device OCR even if a fake recognizer were injected for the normal flow.
+    private func exportLastScan() {
+        guard let captured = lastCaptured else {
+            errorMessage = "Scan or pick a photo first, then long-press the logo to export its OCR."
+            return
+        }
+        Task { @MainActor in
+            do {
+                let observations = try await VisionTextRecognizer().recognizeObservations(in: captured)
+                exportText = ObservationFixture.export(observations)
+            } catch {
+                errorMessage = "Couldn’t export OCR for that image."
+            }
+        }
+    }
+}
+
+/// A no-op in release; in DEBUG it long-presses to trigger the OCR export. Keeps the debug trigger
+/// out of the shipping build entirely.
+private struct DebugOCRExportGesture: ViewModifier {
+    let action: () -> Void
+    func body(content: Content) -> some View {
+        #if DEBUG
+        content.onLongPressGesture(minimumDuration: 0.8, perform: action)
+        #else
+        content
+        #endif
     }
 }
