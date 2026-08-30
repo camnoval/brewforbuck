@@ -89,6 +89,18 @@ struct VisionTextRecognizer: TextRecognizer {
                             ))
                         }
                     }
+                    #if DEBUG
+                    // Diagnostic: dump exactly what Vision produced (and what LineAssembler makes of
+                    // it) to the Xcode console on every scan, so failures can be inspected without
+                    // any in-app gesture. Copy this block from the console.
+                    print("""
+
+                    ===== BANGFORBUCK OCR EXPORT (start) =====
+                    \(ObservationFixture.export(observations))
+                    ===== BANGFORBUCK OCR EXPORT (end) =====
+
+                    """)
+                    #endif
                     continuation.resume(returning: observations)
                 }
                 request.recognitionLevel = .accurate
