@@ -5,7 +5,6 @@
 //  Created by Noval, Cameron on 8/30/26.
 //
 
-
 import XCTest
 @testable import CoreServices
 import CoreModel
@@ -38,7 +37,7 @@ final class ObservationFixtureTests: XCTestCase {
         let literal = ObservationFixture.swiftLiteral(obs)
         XCTAssertTrue(literal.hasPrefix("let observations: [TextObservation] = ["))
         XCTAssertTrue(literal.contains(
-            "TextObservation(text: \"Coors\", box: TextBox(minX: 0.05, minY: 0.79, maxX: 0.3, maxY: 0.81)))"))
+            "TextObservation(text: \"Coors\", box: TextBox(minX: 0.05, minY: 0.79, maxX: 0.3, maxY: 0.81))"))
         XCTAssertTrue(literal.contains("TextObservation(text: \"$5\","))
     }
 

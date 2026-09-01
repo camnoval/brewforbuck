@@ -5,6 +5,55 @@ here — keep this lean. Newest note on top; each new note says plainly what it 
 
 ---
 
+## 2026-08-30 (part 4) — Real OCR dumps: word-level confirmed, gutter detector rebuilt
+
+*Exported real word-level `[TextObservation]` from all 5 menus on device (via the DEBUG console dump
+added to `VisionTextRecognizer`). This supersedes part 3's "word-level is the fix" as incomplete: it
+fixed Southside but not the Reservoir. Every change below is validated in Python against the **real**
+coordinates and ported.*
+
+**Confirmed from the dumps:**
+- **Word-level extraction works** — Vision returns clean per-word boxes (not degenerate whole-line),
+  so the gutter geometry is real.
+- **Southside**: assembles into ~47 clean columned lines. Fixed. ✓
+- **Reservoir**: was still fusing DOMESTIC+IMPORT. Root cause: its gutter is crossed by a centered
+  `BEER` title, a `bottles & cans` subtitle, and a full-width `MISC` section, so the coverage
+  histogram never sees an empty channel. ✗ → now fixed (below).
+- **El Perrito**: columns actually split fine; failure is pure OCR quality from the **angled** photo
+  (`Sauza…fresh` → `chu8…tresh`). Not a code bug — needs a straight-on shot.
+- **Exclusive**: single column correct, but `$` prices were OCR'd as letters (`......S13`,
+  `BEER.....S-`); partially recovered (below), but fancy-font price glyphs remain unreliable.
+
+**New gutter detector (`LineAssembler`), the core fix.** `bestVerticalSplit` now has two tiers:
+1. **Coverage corridors / central** (primary, unchanged): a clean empty-corridor cut (any number of
+   columns) or a central-gutter fallback. This correctly prefers the true inter-column gutter over a
+   within-column name/price gap — the widest *passing* empty corridor is the one between columns —
+   so it keeps the word-level two-column and N-column synthetics intact.
+2. **Per-row gap voting** (fallback): used only when coverage finds nothing — i.e. when the gutter is
+   bridged by centered text (Reservoir's `BEER` title, `bottles & cans` subtitle, full-width `MISC`
+   section) so there's no empty corridor. Each visual row votes at the midpoint of every blank gap ≥
+   `minGutterGap` (0.045) between adjacent words; votes are clustered and ranked, first passing the
+   column guards wins. Centered/full-width rows are contiguous → cast no vote → can't hide the gutter.
+   New helpers: `rankedGutters`, `rows(of:)`.
+(Order matters: an earlier pass ran per-row-gap first and mis-split the word-level test by picking a
+within-column name/price gap that was wider than the true gutter; coverage-first fixes that.)
+Validated in Python against real Reservoir → 2 cols (DOMESTIC|IMPORT split), real Southside → 2 cols,
+real Exclusive → 1 col, the word-level two-column test (lines intact), and synthetic 1/2/3/4-col,
+title-spanning, and single-col-with-right-prices. Residual: a full-width section crossing the gutter
+(Reservoir's MISC) gets its centered rows chopped at the split — acceptable (those items are mostly
+N/A → excluded).
+
+**Also:** `pureNumber` now tolerates `$`→`S` misreads (`S13` → 13) for trailing price tokens.
+
+**Tests:** `LineAssemblerRealMenuTests` gains `testReservoirRealOCRSeparatesDomesticFromImport` (real
+coords). Regenerate/verify with `cd Core && swift test`.
+
+**Still open / next:** angled-photo OCR (El Perrito) — guidance is shoot straight-on; consider a
+"retake straighter" hint when confidence is low. Fancy-font price glyphs (Exclusive) — hard. The
+`Features/Compare` store-calculator UI and the token-noise/confidence pass remain queued.
+
+---
+
 ## 2026-08-30 (part 3) — Real-menu testing: root-caused the multi-column failure
 
 *Tested the build against 5 real menu photos. Only Southside "worked" — and even it was silently

@@ -63,14 +63,89 @@ public enum LineAssembler {
         return columnGroups(left) + columnGroups(right)
     }
 
-    /// The best single vertical cut of `group`, or `nil`. Tries a clean empty-corridor cut first
-    /// (handles any number of columns), then a central-gutter fallback for a two-column page whose
-    /// gutter is bridged by a modest, non-header title.
+    /// Minimum blank horizontal gap (fraction of page width) between two boxes in a row to count as
+    /// a possible column gutter. Below this it's just inter-word spacing.
+    static let minGutterGap = 0.045
+    /// Votes within this x-distance are treated as the same gutter.
+    static let gutterClusterTolerance = 0.04
+    /// A gutter needs at least this many agreeing rows.
+    static let minGutterVotes = 3
+
+    /// The best single vertical cut of `group`, or `nil`. Two tiers, in order:
+    /// 1. **Coverage corridors / central** — the primary detector. A clean empty-corridor cut
+    ///    (handles any number of columns) or a central-gutter fallback for a two-column page. This
+    ///    correctly prefers the true inter-column gutter over a within-column name/price gap, because
+    ///    the widest *passing* empty corridor is the one between columns.
+    /// 2. **Per-row gap voting** — used only when coverage finds nothing, i.e. when the gutter is
+    ///    bridged by centered text (a `BEER` title, a `bottles & cans` subtitle, a full-width `MISC`
+    ///    section, as on the Reservoir) so no empty corridor exists. A real gutter is still the blank
+    ///    channel most two-column *rows* share; those centered/full-width rows are contiguous and
+    ///    cast no vote, so they can't hide it.
     static func bestVerticalSplit(
         _ group: [TextObservation]
     ) -> (left: [TextObservation], right: [TextObservation])? {
         guard group.count >= minGroupToSplit else { return nil }
-        return corridorSplit(group) ?? centralSplit(group)
+        if let split = corridorSplit(group) ?? centralSplit(group) { return split }
+        for gutterX in rankedGutters(group) {
+            if let split = guardedSplit(group, at: gutterX) { return split }
+        }
+        return nil
+    }
+
+    /// Candidate gutter x-positions from per-row gap voting, ranked best-first (most agreeing rows,
+    /// then widest gap). Each row contributes a vote at the midpoint of every blank gap ≥ `minGutterGap`
+    /// between horizontally-adjacent boxes; votes are clustered and the widest gaps seed the clusters
+    /// so a real inter-column gutter is tried before a narrow name/price gap.
+    static func rankedGutters(_ group: [TextObservation]) -> [Double] {
+        var votes: [(x: Double, width: Double)] = []
+        for row in rows(of: group) {
+            let ordered = row.sorted { $0.box.minX < $1.box.minX }
+            for i in 0..<max(0, ordered.count - 1) {
+                let gap = ordered[i + 1].box.minX - ordered[i].box.maxX
+                if gap >= minGutterGap {
+                    votes.append(((ordered[i].box.maxX + ordered[i + 1].box.minX) / 2, gap))
+                }
+            }
+        }
+        guard votes.count >= minGutterVotes else { return [] }
+
+        var used = [Bool](repeating: false, count: votes.count)
+        let order = votes.indices.sorted { votes[$0].width > votes[$1].width }  // seed from widest
+        var clusters: [(count: Int, width: Double, x: Double)] = []
+        for seed in order where !used[seed] {
+            let cx = votes[seed].x
+            let members = votes.indices.filter { !used[$0] && abs(votes[$0].x - cx) <= gutterClusterTolerance }
+            for m in members { used[m] = true }
+            if members.count >= minGutterVotes {
+                let avgX = members.reduce(0.0) { $0 + votes[$1].x } / Double(members.count)
+                let avgW = members.reduce(0.0) { $0 + votes[$1].width } / Double(members.count)
+                clusters.append((members.count, avgW, avgX))
+            }
+        }
+        clusters.sort { a, b in a.count != b.count ? a.count > b.count : a.width > b.width }
+        return clusters.map { $0.x }
+    }
+
+    /// Group observations into visual rows by vertical position — same banding the row assembler
+    /// uses, exposed here so gutter voting sees the two-column rows.
+    static func rows(of observations: [TextObservation]) -> [[TextObservation]] {
+        guard !observations.isEmpty else { return [] }
+        let sorted = observations.sorted { $0.box.midY > $1.box.midY }
+        let tolerance = medianHeight(of: sorted) * 0.5
+        var rows: [[TextObservation]] = []
+        var current: [TextObservation] = []
+        var anchorMidY: Double? = nil
+        for observation in sorted {
+            let mid = observation.box.midY
+            if let anchor = anchorMidY, abs(mid - anchor) > tolerance {
+                rows.append(current); current = [observation]; anchorMidY = mid
+            } else {
+                if anchorMidY == nil { anchorMidY = mid }
+                current.append(observation)
+            }
+        }
+        if !current.isEmpty { rows.append(current) }
+        return rows
     }
 
     /// Cut at a truly-empty interior corridor. Header-width boxes are suppressed from the coverage

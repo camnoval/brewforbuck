@@ -70,4 +70,28 @@ final class LineAssemblerRealMenuTests: XCTestCase {
         XCTAssertEqual(bud?.price, Price(dollars: 5.50))
         XCTAssertEqual(bud?.category, .bottledBeer)
     }
+
+    /// The Reservoir: a two-column beer list (DOMESTIC | IMPORT) whose gutter is crossed by a
+    /// centered "BEER" title, a "bottles & cans" subtitle, and a full-width "MISC" section. The
+    /// coverage histogram couldn't find the gutter through all that; per-row gap voting does,
+    /// because those centered/full-width rows are contiguous and cast no vote. Real coordinates.
+    func testReservoirRealOCRSeparatesDomesticFromImport() {
+        var o: [TextObservation] = []
+        o += row([("DOMESTIC", 0.1344, 0.3437)], 0.6687)
+        o += row([("IMPORT", 0.6561, 0.8126)], 0.6723)
+        o += row([("Miller", 0.0875, 0.1594), ("High", 0.1625, 0.225), ("Life", 0.2281, 0.2781),
+                  ("16oz", 0.2813, 0.3438), ("/", 0.3469, 0.3656), ("6", 0.3688, 0.3875)], 0.602)
+        o += row([("Corona", 0.6656, 0.7559), ("/", 0.7586, 0.7777), ("6", 0.7805, 0.8031)], 0.6084)
+        o += row([("Coors", 0.1469, 0.2187), ("Light", 0.2219, 0.2906), ("/", 0.2938, 0.3125), ("5", 0.3156, 0.3344)], 0.5422)
+        o += row([("Harp", 0.6843, 0.7439), ("/", 0.7468, 0.7657), ("8", 0.7686, 0.7907)], 0.5469)
+        o += row([("Lagunitas", 0.1313, 0.2531), ("IPA", 0.2563, 0.3), ("/", 0.3031, 0.3219), ("7", 0.325, 0.3437)], 0.4506)
+        o += row([("Paulaner", 0.6156, 0.725), ("Radler", 0.7281, 0.8156), ("/", 0.8188, 0.8375), ("6", 0.8406, 0.8594)], 0.4578)
+
+        let lines = LineAssembler.lines(from: o)
+        XCTAssertFalse(lines.contains { $0.contains("Miller") && $0.contains("Corona") },
+                       "DOMESTIC Miller must not fuse with IMPORT Corona")
+        XCTAssertFalse(lines.contains { $0.contains("Lagunitas") && $0.contains("Paulaner") })
+        XCTAssertTrue(lines.contains { $0.contains("Miller") && $0.contains("High") && $0.contains("Life") })
+        XCTAssertTrue(lines.contains { $0.contains("Corona") && !$0.contains("Miller") })
+    }
 }

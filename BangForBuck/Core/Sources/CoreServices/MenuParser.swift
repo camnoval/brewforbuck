@@ -40,7 +40,8 @@ public struct MenuParser {
                 let abv = Self.detectABV(line)   // ABV is usually printed once for the whole line
                 for entry in multi {
                     items.append(MenuItem(
-                        name: entry.name, price: entry.price,
+                        name: entry.name,
+                        price: Self.looksLikeItemName(entry.name) ? entry.price : nil,
                         readABV: abv, readSize: entry.size,
                         category: itemCategory, descriptionText: nil
                     ))
@@ -57,8 +58,11 @@ public struct MenuParser {
             }
 
             guard !parsed.name.isEmpty else { continue }
+            // A price only counts if the name looks like a real drink title; otherwise the line is a
+            // recipe/promo/fragment and drops (price suppressed) into the visible needsPrice bucket.
+            let priceIfConfident = Self.looksLikeItemName(parsed.name) ? price : nil
             items.append(MenuItem(
-                name: parsed.name, price: price,
+                name: parsed.name, price: priceIfConfident,
                 readABV: parsed.readABV, readSize: parsed.readSize,
                 category: itemCategory, descriptionText: nil
             ))
@@ -74,9 +78,10 @@ public struct MenuParser {
         let parsed = parseItem(line)
         let hasPipe = contains(line, "|")
         let hasDotLeader = hasDotLeaderRun(line)   // "COCKTAILS........$13" — a dotted section total
-        // A priced line is an item, never a header — UNLESS a pipe ("Elixirs | $14") or dot leaders
-        // ("COCKTAILS...$13") mark it as a section total whose items inherit the price.
-        if parsed.price != nil && !hasPipe && !hasDotLeader { return nil }
+        // A priced line is an item, never a header — UNLESS a pipe ("Elixirs | $14"), dot leaders
+        // ("COCKTAILS...$13"), or the line is nothing but a section label plus a price ("SHOTS 4",
+        // "SHOTS $6 each") mark it as a section total whose items inherit the price.
+        if parsed.price != nil && !hasPipe && !hasDotLeader && !isPureSectionLabel(line) { return nil }
         for (keywords, cat) in headerKeywords {
             if keywords.contains(where: { contains(lower, $0) }) {
                 return (cat, parsed.price)   // header price (e.g. "Elixirs | $14") when present
@@ -115,7 +120,58 @@ public struct MenuParser {
         (["specialty cocktails", "original cocktails", "signature cocktails", "cocktails", "elixirs", "back to basics", "hand-crafted", "hand crafted", "specialty", "signature"], .cocktail),
     ]
 
-    // MARK: - Item parsing
+    /// True if the line is *only* a section label — every substantive token is a section word,
+    /// with nothing left but a price/size or filler ("each", "per"). Lets "SHOTS 4" and
+    /// "SHOTS $6 each" read as headers (their price is inherited) instead of ranking as a "$4 drink".
+    static func isPureSectionLabel(_ line: String) -> Bool {
+        var sawSection = false
+        for token in line.split(separator: " ").map(String.init) {
+            let w = stripEdgePunctuation(token).lowercased()
+            if w.isEmpty { continue }
+            if isMeasurementOrPrice(w) || labelFillerWords.contains(w) { continue }
+            if sectionWords.contains(w) { sawSection = true; continue }
+            return false   // a real, non-section word — this is an item, not a label
+        }
+        return sawSection
+    }
+
+    static let sectionWords: Set<String> = [
+        "beer", "beers", "wine", "wines", "drinks", "drink", "menu", "shots", "shot",
+        "cocktail", "cocktails", "food", "drafts", "draft", "bottles", "bottle", "cans", "can",
+        "cider", "ciders", "seltzer", "seltzers", "domestic", "domestics", "import", "imports",
+        "specialty", "signature", "sangria", "martinis", "elixirs", "reds", "whites", "sparkling",
+        "mocktails", "spirits", "beverages", "selections",
+    ]
+    static let labelFillerWords: Set<String> = ["each", "ea", "per", "and", "the", "our", "list", "of"]
+
+    static func isMeasurementOrPrice(_ w: String) -> Bool {
+        if w == "|" || w == "-" || w == "/" || w == "&" || w == "$" { return true }
+        if w.hasPrefix("+") { return true }
+        if pureNumber(w) != nil { return true }
+        if w.hasSuffix("oz") || w.hasSuffix("oz.") || w.hasSuffix("%") || w.hasSuffix("ml") { return true }
+        if w == "abv" { return true }
+        return false
+    }
+
+    /// Positive evidence that `name` is a real drink title, so it can be ranked. Real menu titles are
+    /// Title-Case or ALL-CAPS ("Coors Light", "House Manhattan"); recipe/ingredient lines and promo
+    /// text are lowercase ("tito's vodka ruby…", "fresh strawberry puree…", "make it spicy") or
+    /// imperative ("For $19.95 get…", "add protein…"). A name failing this keeps no price, so it lands
+    /// in the visible "Not sure" bucket rather than polluting the ranking — never silently dropped.
+    static func looksLikeItemName(_ name: String) -> Bool {
+        let tokens = name.split(separator: " ").map(String.init)
+        guard let firstWord = tokens.first(where: { word in word.contains(where: { $0.isLetter }) })
+        else { return false }   // no alphabetic word at all — a price/size fragment ("$10", "16oz")
+        let bare = stripEdgePunctuation(firstWord)
+        if promoLeadWords.contains(bare.lowercased()) { return false }
+        guard let firstLetter = bare.first(where: { $0.isLetter }) else { return false }
+        return firstLetter.isUppercase
+    }
+
+    static let promoLeadWords: Set<String> = [
+        "make", "add", "ask", "get", "for", "with", "sub", "choice", "choose", "upgrade",
+        "any", "all", "includes", "served", "topped", "half", "free", "your",
+    ]
 
     static func parseItem(_ raw: String) -> (price: Price?, name: String, readABV: Double?, readSize: Volume?) {
         let readABV = detectABV(raw)
@@ -366,7 +422,11 @@ public struct MenuParser {
 
     static func pureNumber(_ token: String) -> Double? {
         var t = token
-        if t.hasPrefix("$") { t.removeFirst() }
+        if t.hasPrefix("$") {
+            t.removeFirst()
+        } else if t.hasPrefix("S") || t.hasPrefix("s") {
+            t.removeFirst()   // Vision commonly misreads a "$" as "S" (e.g. "S13" for "$13")
+        }
         if t.isEmpty { return nil }
         for c in t where !(c.isNumber || c == ".") { return nil }
         return Double(t)
