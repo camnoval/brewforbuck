@@ -16,16 +16,26 @@ public struct MenuParser {
         var items: [MenuItem] = []
         var category: BeverageCategory = .unknown
         var headerPrice: Price? = nil
+        var inFoodSection = false   // a "FOOD"/"KITCHEN"/… header drops items until the next drink section
 
         for raw in lines {
             let line = Self.trimmed(raw)
             if line.isEmpty { continue }
 
+            // Food is dropped entirely (not even shown for review): a food-section header starts a
+            // drop region; any drink-section header ends it.
+            if Self.isFoodSectionHeader(line) { inFoodSection = true; continue }
+
             if let (cat, hp) = Self.sectionHeader(line) {
+                inFoodSection = false
                 category = cat
                 headerPrice = hp
                 continue
             }
+
+            // Drop food dishes (in a food section, or a stray dish line) and URLs/emails outright —
+            // these are never drinks, so they don't belong in the ranking or the "Not sure" bucket.
+            if inFoodSection || Self.looksLikeFood(line) || Self.looksLikeURL(line) { continue }
 
             // Non-alcoholic markers on the raw line (N/A, "non-alcoholic", "zero proof") force the
             // category so a brand/style match downstream can't rank e.g. "Gruvi IPA N/A beer" as a
@@ -41,7 +51,7 @@ public struct MenuParser {
                 for entry in multi {
                     items.append(MenuItem(
                         name: entry.name,
-                        price: Self.looksLikeItemName(entry.name) ? entry.price : nil,
+                        price: Self.isRankableName(entry.name) ? entry.price : nil,
                         readABV: abv, readSize: entry.size,
                         category: itemCategory, descriptionText: nil
                     ))
@@ -60,7 +70,7 @@ public struct MenuParser {
             guard !parsed.name.isEmpty else { continue }
             // A price only counts if the name looks like a real drink title; otherwise the line is a
             // recipe/promo/fragment and drops (price suppressed) into the visible needsPrice bucket.
-            let priceIfConfident = Self.looksLikeItemName(parsed.name) ? price : nil
+            let priceIfConfident = Self.isRankableName(parsed.name) ? price : nil
             items.append(MenuItem(
                 name: parsed.name, price: priceIfConfident,
                 readABV: parsed.readABV, readSize: parsed.readSize,
@@ -153,24 +163,88 @@ public struct MenuParser {
         return false
     }
 
-    /// Positive evidence that `name` is a real drink title, so it can be ranked. Real menu titles are
-    /// Title-Case or ALL-CAPS ("Coors Light", "House Manhattan"); recipe/ingredient lines and promo
-    /// text are lowercase ("tito's vodka ruby…", "fresh strawberry puree…", "make it spicy") or
-    /// imperative ("For $19.95 get…", "add protein…"). A name failing this keeps no price, so it lands
-    /// in the visible "Not sure" bucket rather than polluting the ranking — never silently dropped.
-    static func looksLikeItemName(_ name: String) -> Bool {
-        let tokens = name.split(separator: " ").map(String.init)
-        guard let firstWord = tokens.first(where: { word in word.contains(where: { $0.isLetter }) })
-        else { return false }   // no alphabetic word at all — a price/size fragment ("$10", "16oz")
-        let bare = stripEdgePunctuation(firstWord)
-        if promoLeadWords.contains(bare.lowercased()) { return false }
-        guard let firstLetter = bare.first(where: { $0.isLetter }) else { return false }
-        return firstLetter.isUppercase
+    /// A header that starts a food block ("FOOD", "KITCHEN", "Small Plates", "Shareables"). Every
+    /// substantive token must be a food-section word (size adjectives like "small" allowed as filler).
+    static func isFoodSectionHeader(_ line: String) -> Bool {
+        var sawFood = false
+        for token in line.split(separator: " ").map(String.init) {
+            let w = stripEdgePunctuation(token).lowercased()
+            if w.isEmpty || w == "&" || labelFillerWords.contains(w) || foodSectionFiller.contains(w) { continue }
+            if foodSectionWords.contains(w) { sawFood = true; continue }
+            return false
+        }
+        return sawFood
+    }
+
+    /// A dish line ("Parmesan Fries $8", "Buffalo Wings", "Chicken Bites"). Exact-token match against
+    /// a deliberately drink-SAFE food list — "taco"/"beer" are excluded so the real beer
+    /// "Off Color Beer for Tacos" is not dropped.
+    static func looksLikeFood(_ line: String) -> Bool {
+        for token in line.split(separator: " ").map(String.init) {
+            if foodWords.contains(stripEdgePunctuation(token).lowercased()) { return true }
+        }
+        return false
+    }
+
+    /// A URL or email Vision picked up from a footer ("WWW.ELFERRITOATX.COM").
+    static func looksLikeURL(_ line: String) -> Bool {
+        let l = line.lowercased()
+        return contains(l, "www.") || contains(l, ".com") || contains(l, ".net")
+            || contains(l, "://") || contains(l, ".org")
+    }
+
+    static let foodSectionWords: Set<String> = [
+        "food", "foods", "kitchen", "eats", "snacks", "snack", "apps", "appetizer", "appetizers",
+        "starter", "starters", "sides", "mains", "entree", "entrees", "plates", "plate", "bites",
+        "shareable", "shareables", "munchies", "nibbles",
+    ]
+    static let foodSectionFiller: Set<String> = ["small", "large", "bar", "hot", "cold", "warm", "shared"]
+    /// Drink-SAFE dish words (exact token match). No "taco"/"beer"/"tea"/"cheese" — those collide with
+    /// real drink names.
+    static let foodWords: Set<String> = [
+        "fries", "cheeseburger", "hamburger", "burger", "burgers", "slider", "sliders", "quesadilla",
+        "quesadillas", "nachos", "nacho", "mozzarella", "calamari", "dumplings", "hummus", "guacamole",
+        "queso", "burrito", "burritos", "flatbread", "wings", "tenders", "tots", "pretzel", "pretzels",
+        "wontons", "empanada", "empanadas", "panini", "meatball", "meatballs", "nuggets", "parmesan",
+        "chicken", "bites", "poppers",
+    ]
+
+    /// Whether a parsed name is a rankable drink, decided by **casing-independent** structure so a
+    /// bar that lowercases its menu still ranks (capitalization is deliberately not a signal — real
+    /// menus lowercase titles too). A name is rankable unless it's clearly *not* a drink:
+    ///   - a **fragment** with no real word ("$10", "16oz") or only size words ("glass", "pitcher");
+    ///   - an **imperative/promo** line ("make it spicy", "For $19.95 get…", "add protein…");
+    ///   - a **recipe/ingredient** line (≥2 prep words: "fresh strawberry puree lime juice").
+    /// A name that fails keeps no price, so it lands in the visible "Not sure" bucket rather than
+    /// polluting the ranking — never silently dropped. Identity (brand/style/ABV) is a separate,
+    /// downstream concern that only sets the estimated-vs-read badge, not whether a line ranks.
+    static func isRankableName(_ name: String) -> Bool {
+        let words = name.split(separator: " ")
+            .map { stripEdgePunctuation(String($0)).lowercased() }
+            .filter { $0.count >= 2 && $0.contains(where: { $0.isLetter })
+                      && !isMeasurementOrPrice($0) && !labelFillerWords.contains($0) }
+        guard let first = words.first else { return false }             // fragment: no real word
+        if words.allSatisfy({ sizeOnlyWords.contains($0) }) { return false }  // "glass", "pitcher"
+        if promoLeadWords.contains(first) { return false }              // imperative / promo lead-in
+        if words.filter({ recipeWords.contains($0) }).count >= 2 { return false }  // ingredient list
+        return true
     }
 
     static let promoLeadWords: Set<String> = [
         "make", "add", "ask", "get", "for", "with", "sub", "choice", "choose", "upgrade",
-        "any", "all", "includes", "served", "topped", "half", "free", "your",
+        "any", "all", "includes", "served", "half", "free", "your",
+    ]
+    /// Words that name a serving vessel, never a drink — a name made only of these is a stray price row.
+    static let sizeOnlyWords: Set<String> = [
+        "glass", "bottle", "pitcher", "carafe", "flight", "pint", "mug", "can", "draft",
+        "double", "single", "neat", "rocks", "shot",
+    ]
+    /// Prep / mixer words that appear in cocktail *recipes*, not titles. Two or more ⇒ ingredient line.
+    static let recipeWords: Set<String> = [
+        "juice", "syrup", "simple", "fresh", "squeezed", "fresh-squeezed", "puree", "nectar", "soda",
+        "water", "bitters", "muddled", "topped", "dash", "splash", "garnish", "rim", "twist", "infused",
+        "saline", "distilled", "agave", "cranberry", "curacao", "vermouth", "tonic", "peel", "zest",
+        "foam", "germain", "chinola", "colombian", "caramelized", "sec", "sugar",
     ]
 
     static func parseItem(_ raw: String) -> (price: Price?, name: String, readABV: Double?, readSize: Volume?) {

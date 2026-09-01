@@ -5,6 +5,74 @@ here — keep this lean. Newest note on top; each new note says plainly what it 
 
 ---
 
+## 2026-09-01 (part 6) — Food/URL dropped; cocktail math audited
+
+**Food dropped entirely (`MenuParser`).** A food-section header ("FOOD", "KITCHEN", "Small Plates",
+"Shareables" — `isFoodSectionHeader`, size adjectives allowed as filler) starts a drop region that any
+drink-section header ends; plus a drink-SAFE dish gazetteer (`looksLikeFood`, exact-token match:
+fries/cheeseburger/quesadilla/nachos/wings/tenders/parmesan/chicken/bites/…) drops stray dishes even
+with no header. `taco`/`beer`/`tea`/`cheese` are deliberately excluded so the real beer *Off Color
+"Beer for Tacos"* survives. Food is dropped outright (not shown for review). Fixes M/G ranking "Fries"
+as a 12% ABV $8 drink.
+
+**URLs/emails dropped (`looksLikeURL`).** Lines containing www./.com/.net/.org/:// are dropped — fixes
+El Perrito ranking "WWW.ELFERRITOATX.COM" as a 40% shot.
+
+Both are new drop paths at the top of `parse`, before item emission. Validated in Python against every
+dump: all food lines + the URL drop, all 22 sampled real drinks (incl. Off Color Beer for Tacos, Sun
+Cruiser Iced Tea, Twisted Tea) are kept. Tests added to `MenuParserConfidenceTests`.
+
+**Cocktail-math audit (no code change — it's correct).** `standardDrinks = size × abv/100 ÷ 0.6`
+(NIAAA 0.6 fl oz ethanol per standard drink). Cocktail estimate = 5 oz × 12% = **1.00** standard
+drink, identical to a single 1.5 oz shot of 40% spirit (0.6 oz ethanol); shot estimate = 1.5 oz × 40%
+= **1.00**; martini = 3.5 oz × 25% = 1.46. So "assume one shot" holds and value math is sound.
+COSMETIC ONLY: the size *chip* in `ResultsView` rounds a 1.5 oz shot to "2 oz" (display formatting);
+the calculation correctly uses 1.5. Consider formatting sub-2 oz sizes with one decimal.
+
+*On-device re-scan: Reservoir, Southside, Exclusive all rank correctly now. Remaining problems were
+the dense promo-heavy **M/G** menu (recipe/promo/header lines ranking) and the angled **El Perrito**
+(bad OCR). Both addressed generalizably — validated the classifier across all 5 real dumps, not just
+M/G, so it can't regress the working three.*
+
+**Rank-eligibility gate (`MenuParser`), generalizable + casing-independent.** Two additions:
+1. **Pure section labels are headers even when priced.** `sectionHeader` no longer bails just because
+   a line has a price; `isPureSectionLabel` treats a line whose only substantive tokens are section
+   words (+ a price / "each") as a header. Fixes "SHOTS 4" ranking as a $4 drink.
+2. **`isRankableName` — decided by structure, NOT capitalization.** An early version gated on
+   Title-Case, which would have broken on any bar that lowercases its menu (a real, common style).
+   Reworked to a casing-independent predicate: a priced line ranks unless it is a *fragment* (no real
+   word, or only vessel words like "glass"/"pitcher"), an *imperative/promo* line (lead word in
+   `promoLeadWords`: make/add/ask/get/for/with/any/…), or a *recipe* (≥2 words in `recipeWords`:
+   juice/syrup/fresh/squeezed/puree/…). A failing line keeps no price → visible "Not sure" bucket,
+   never deleted. New sets: `sizeOnlyWords`, `recipeWords` (+ existing `promoLeadWords`).
+Validated in Python against every dump's assembled lines **and lowercased copies of them**: output is
+identical capitalized vs lowercased (Southside's beers rank either way), all promo/recipe/section junk
+drops, and the working three don't regress. Because ranking needs a price and priceless lines already
+route to review, the gate only had to catch *priced* junk. Tests: `MenuParserConfidenceTests`
+(incl. `testLowercaseStyledMenuStillRanks`). El Perrito still ranks nothing (unreadable, all priceless
+→ review) — correct.
+
+**On identity / ML (design decision, keep it simple).** Evaluated using the 655-brand
+`beverages.json` gazetteer + `StaticBeverageKnowledge` styles (all matched case-insensitively) and, as
+an option, Apple's on-device `NLEmbedding`. Finding: the gazetteer + structural signals already handle
+identity case-independently, so **embeddings were not adopted** — they'd add a framework dependency and
+nondeterminism to help only novel un-listed cocktail names, which already degrade to a flagged
+"estimated" rank (acceptable per product intent: guesses are fine when the menu is hard). If future
+real menus show a systematic gap on un-gazetteered craft names, revisit with an on-device Core ML
+line-classifier trained on labeled OCR exports — not an LLM (offline is a hard requirement). No change
+to min iOS (NL/CoreML/`NLEmbedding` all back-compatible; nothing new was added).
+DATA BUG found in `Tooling/Data/beverages.json`: `"abv": 2/.4` (Budweiser Select 55) is invalid JSON —
+should be `2.4`; the brand-table generator will choke until it's fixed.
+
+**Angled photos — perspective de-skew.** New shell file `Infrastructure/ImageDeskew.swift`
+(compile-on-device; uses Vision + Core Image, untestable in sandbox): `VNDetectDocumentSegmentation`
+finds the menu quad, `CIPerspectiveCorrection` flattens it, run BEFORE `recognizeObservations`. This
+"twists" a tilted menu back to rectangular and recovers perspective-distorted text; it does not fix
+genuine blur/low-res from a bad shot, so pair it with a "hold straight / retake" capture hint. Wire it
+in `VisionTextRecognizer` by mapping the input image through `ImageDeskew.flattened(_:)` first.
+
+---
+
 ## 2026-08-30 (part 4) — Real OCR dumps: word-level confirmed, gutter detector rebuilt
 
 *Exported real word-level `[TextObservation]` from all 5 menus on device (via the DEBUG console dump

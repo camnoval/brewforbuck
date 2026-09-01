@@ -1,20 +1,28 @@
-//
-//  MenuParserConfidenceTests.swift
-//  Core
-//
-//  Created by Noval, Cameron on 9/1/26.
-//
-
-
 import XCTest
 @testable import CoreServices
 import CoreModel
 
 /// Real-world junk filtering (from the M/G and El Perrito dumps): a section label that grabbed a
-/// price must stay a header, and lowercase recipe/promo/fragment lines must not rank — they lose
-/// their price and fall to the visible "Not sure" bucket instead of polluting the ranking.
+/// price stays a header, and promo/recipe/fragment lines don't rank — they lose their price and fall
+/// to the visible "Not sure" bucket. The gate is deliberately **casing-independent**: a bar that
+/// lowercases its menu must still rank (capitalization is not a signal).
 final class MenuParserConfidenceTests: XCTestCase {
     private let parser = MenuParser()
+
+    // MARK: casing independence (the reason we dropped the capitalization gate)
+
+    func testLowercaseStyledMenuStillRanks() {
+        for line in ["modelo $6", "coors light $5", "sierra nevada hazy little thing ipa $7"] {
+            let items = parser.parse([line])
+            XCTAssertNotNil(items.first?.price, "lowercase-styled drink must still rank: \(line)")
+        }
+    }
+
+    func testSizeOnlyPriceRowDoesNotRank() {
+        // "glass $13 | pitcher $45" style stray price row with no drink title on the line.
+        let items = parser.parse(["glass $13"])
+        XCTAssertTrue(items.allSatisfy { $0.price == nil })
+    }
 
     // MARK: section labels
 
@@ -68,9 +76,34 @@ final class MenuParserConfidenceTests: XCTestCase {
         }
     }
 
-    func testAllCapsBrandLineStillRanks() {
-        let items = parser.parse(["COORS LIGHT 22oz. ABV 4.2% - 5"])
-        XCTAssertEqual(items.first?.price, Price(dollars: 5))
-        XCTAssertEqual(items.first?.name, "COORS LIGHT")
+    // MARK: food & URLs are dropped entirely
+
+    func testFoodSectionIsDroppedButDrinksResume() {
+        let items = parser.parse([
+            "FOOD", "Parmesan Fries $8", "Chicken Bites $12",
+            "COCKTAILS", "Mission Margarita $12",
+        ])
+        XCTAssertFalse(items.contains { $0.name.lowercased().contains("fries") })
+        XCTAssertFalse(items.contains { $0.name.lowercased().contains("bites") })
+        XCTAssertEqual(items.first { $0.name == "Mission Margarita" }?.price, Price(dollars: 12),
+                       "a drink section after FOOD must resume ranking")
+    }
+
+    func testStrayFoodLineDropped() {
+        for line in ["Buffalo Wings $12", "Loaded Tots $9", "Cheeseburger Sliders (3) $13"] {
+            XCTAssertTrue(parser.parse([line]).isEmpty, "food should be dropped: \(line)")
+        }
+    }
+
+    func testURLDropped() {
+        XCTAssertTrue(parser.parse(["WWW.ELFERRITOATX.COM"]).isEmpty)
+    }
+
+    func testBeerNamedForTacosIsNotDroppedAsFood() {
+        // Real beer: Off Color "Beer for Tacos" — must survive (we exclude taco/beer from food words).
+        let items = parser.parse(["Off Color Beer for Tacos / 7"])
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items.first?.price, Price(dollars: 7))
+        XCTAssertTrue(items.first?.name.contains("Tacos") ?? false)
     }
 }

@@ -18,7 +18,7 @@
     {"name": "Bud Light Lime", "category": "bottledBeer", "abv": 4.2},
     {"name": "Bud Light Seltzer", "category": "seltzer", "abv": 5.0},
     {"name": "Bud Light", "category": "bottledBeer", "abv": 4.2},
-    {"name": "Budweiser Select 55", "category": "bottledBeer", "abv": 2/.4},
+    {"name": "Budweiser Select 55", "category": "bottledBeer", "abv": 2.4},
     {"name": "Budweiser Select", "category": "bottledBeer", "abv": 4.3},
     {"name": "Budweiser Zero", "category": "nonAlcoholic", "abv": 0.0},
     {"name": "Bud Zero", "category": "nonAlcoholic", "abv": 0.0},
