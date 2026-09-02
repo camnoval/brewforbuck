@@ -17,6 +17,10 @@ public struct MenuParser {
         var category: BeverageCategory = .unknown
         var headerPrice: Price? = nil
         var inFoodSection = false   // a "FOOD"/"KITCHEN"/… header drops items until the next drink section
+        // Index of the just-emitted priceless, rankable name that a *following* bare-price line should
+        // back-fill (the "NAME \n glass $14 | pitcher $49" cocktail layout). Cleared by a section
+        // header or once a priced item is emitted, so a price never leaks across a section or item.
+        var backfillIndex: Int? = nil
 
         for raw in lines {
             let line = Self.trimmed(raw)
@@ -24,12 +28,18 @@ public struct MenuParser {
 
             // Food is dropped entirely (not even shown for review): a food-section header starts a
             // drop region; any drink-section header ends it.
-            if Self.isFoodSectionHeader(line) { inFoodSection = true; continue }
+            if Self.isFoodSectionHeader(line) { inFoodSection = true; backfillIndex = nil; continue }
 
             if let (cat, hp) = Self.sectionHeader(line) {
                 inFoodSection = false
+                // A pure wine sub-label ("whites"/"reds"/"bubbles") groups within the Wine section
+                // rather than starting a new one, so it must NOT reset the shared "glass $14 | bottle
+                // $58" price the wines under it inherit.
+                let isWineSubLabel = cat == .wineGlass && category == .wineGlass && hp == nil
+                    && Self.isWineSubLabel(line)
                 category = cat
-                headerPrice = hp
+                if !isWineSubLabel { headerPrice = hp }
+                backfillIndex = nil     // a new section — don't back-fill across it
                 continue
             }
 
@@ -41,6 +51,23 @@ public struct MenuParser {
             // category so a brand/style match downstream can't rank e.g. "Gruvi IPA N/A beer" as a
             // real IPA. Checked on the raw line so the "/" in "N/A" is still intact.
             let itemCategory = Self.looksNonAlcoholic(raw) ? .nonAlcoholic : category
+
+            // A nameless size/price grid ("16oz $7 | 22oz $12 | Pitcher $25", or a cocktail's
+            // "glass $14 | pitcher $49"). Two layouts, distinguished by whether a name is waiting:
+            //   • back-fill — the price line *follows* its drink's name (cocktails). Attach the
+            //     smallest (single-serving) price to that just-emitted priceless name.
+            //   • forward — the grid *leads* a list of drinks that each carry no price (DRAFTS, a
+            //     happy-hour block). Adopt the smallest as the section price the drinks below inherit.
+            // The grid line itself is always dropped.
+            if let gridPrice = Self.barePriceGridSmallest(line) {
+                if let bi = backfillIndex, items[bi].price == nil {
+                    items[bi] = items[bi].withPrice(gridPrice)
+                    backfillIndex = nil
+                } else {
+                    headerPrice = gridPrice
+                }
+                continue
+            }
 
             // A line listing several size/price pairs (wine glass/bottle, a beer size grid) becomes
             // one item per size, each ranked separately (Decision: one row per size). Each entry
@@ -56,6 +83,7 @@ public struct MenuParser {
                         category: itemCategory, descriptionText: nil
                     ))
                 }
+                backfillIndex = nil
                 continue
             }
 
@@ -70,12 +98,15 @@ public struct MenuParser {
             guard !parsed.name.isEmpty else { continue }
             // A price only counts if the name looks like a real drink title; otherwise the line is a
             // recipe/promo/fragment and drops (price suppressed) into the visible needsPrice bucket.
-            let priceIfConfident = Self.isRankableName(parsed.name) ? price : nil
+            let rankable = Self.isRankableName(parsed.name)
+            let priceIfConfident = rankable ? price : nil
             items.append(MenuItem(
                 name: parsed.name, price: priceIfConfident,
                 readABV: parsed.readABV, readSize: parsed.readSize,
                 category: itemCategory, descriptionText: nil
             ))
+            // Eligible for back-fill only if it's a real drink name still waiting for its price.
+            backfillIndex = (priceIfConfident == nil && rankable) ? items.count - 1 : nil
         }
         return items
     }
@@ -150,9 +181,23 @@ public struct MenuParser {
         "cocktail", "cocktails", "food", "drafts", "draft", "bottles", "bottle", "cans", "can",
         "cider", "ciders", "seltzer", "seltzers", "domestic", "domestics", "import", "imports",
         "specialty", "signature", "sangria", "martinis", "elixirs", "reds", "whites", "sparkling",
-        "mocktails", "spirits", "beverages", "selections",
+        "mocktails", "spirits", "beverages", "selections", "bubbles", "rosé", "rose", "rosados",
     ]
     static let labelFillerWords: Set<String> = ["each", "ea", "per", "and", "the", "our", "list", "of"]
+
+    /// Wine sub-groupings that appear under a `Wine` header without their own price — they must not
+    /// reset the section's shared by-the-glass/bottle price.
+    static let wineSubLabels: Set<String> = ["whites", "reds", "rosé", "rose", "bubbles", "sparkling"]
+    static func isWineSubLabel(_ line: String) -> Bool {
+        var saw = false
+        for token in line.split(separator: " ").map(String.init) {
+            let w = stripEdgePunctuation(token).lowercased()
+            if w.isEmpty { continue }
+            if wineSubLabels.contains(w) { saw = true; continue }
+            return false
+        }
+        return saw
+    }
 
     static func isMeasurementOrPrice(_ w: String) -> Bool {
         if w == "|" || w == "-" || w == "/" || w == "&" || w == "$" { return true }
@@ -224,6 +269,7 @@ public struct MenuParser {
             .filter { $0.count >= 2 && $0.contains(where: { $0.isLetter })
                       && !isMeasurementOrPrice($0) && !labelFillerWords.contains($0) }
         guard let first = words.first else { return false }             // fragment: no real word
+        if words.allSatisfy({ sectionWords.contains($0) }) { return false }  // bare "whites"/"reds"/"beer"
         if words.allSatisfy({ sizeOnlyWords.contains($0) }) { return false }  // "glass", "pitcher"
         if promoLeadWords.contains(first) { return false }              // imperative / promo lead-in
         if words.filter({ recipeWords.contains($0) }).count >= 2 { return false }  // ingredient list
@@ -236,7 +282,7 @@ public struct MenuParser {
     ]
     /// Words that name a serving vessel, never a drink — a name made only of these is a stray price row.
     static let sizeOnlyWords: Set<String> = [
-        "glass", "bottle", "pitcher", "carafe", "flight", "pint", "mug", "can", "draft",
+        "glass", "gloss", "bottle", "pitcher", "pitchor", "carafe", "flight", "pint", "mug", "can", "draft",
         "double", "single", "neat", "rocks", "shot",
     ]
     /// Prep / mixer words that appear in cocktail *recipes*, not titles. Two or more ⇒ ingredient line.
@@ -255,11 +301,17 @@ public struct MenuParser {
         var price: Price? = nil
         var namePart = line
 
-        if let dollarIdx = lastIndex(of: "$", in: line) {
+        if let dollarIdx = firstIndex(of: "$", in: line) {
             let chars = Array(line)
             let after = String(chars[(dollarIdx + 1)...])
-            if let num = leadingNumber(after) { price = Price(dollars: num) }
+            if let num = normalizedDollars(leadingDigitString(repairPriceDigits(after))) { price = Price(dollars: num) }
             namePart = String(chars[..<dollarIdx])
+        } else if let bare = firstBarePriceToken(line) {
+            // A bare 4+-digit superscript-cent price printed without a "$" (Guinness "…1025 1325
+            // 2825" → $10.25); take the first (single-serving) one and cut it + the rest off the name.
+            if let num = normalizedDollars(bare.digits) { price = Price(dollars: num) }
+            let tokens = line.split(separator: " ").map(String.init)
+            namePart = tokens[0..<bare.index].joined(separator: " ")
         } else {
             let tokens = line.split(separator: " ").map(String.init)
             if let last = tokens.last, let num = pureNumber(last) {
@@ -392,14 +444,14 @@ public struct MenuParser {
 
     /// 750 mL bottle = 25.36 oz; 1.5 L magnum = 50.72 oz; pitcher ~ 60 oz; carafe ~ 500 mL = 17 oz.
     static let sizeWordTable: [(word: String, ounces: Double)] = [
-        ("glass", 5), ("gls", 5), ("bottle", 25.36), ("btl", 25.36), ("bot", 25.36),
+        ("glass", 5), ("gls", 5), ("gloss", 5), ("bottle", 25.36), ("btl", 25.36), ("bot", 25.36),
         ("pint", 16), ("draft", 16), ("draught", 16), ("pour", 5),
-        ("pitcher", 60), ("carafe", 17), ("half", 8), ("can", 12), ("magnum", 50.72),
+        ("pitcher", 60), ("pitchor", 60), ("carafe", 17), ("half", 8), ("can", 12), ("magnum", 50.72),
     ]
 
     /// Classify one token as a price (`$9`), a size (`12oz`, `glass`), or a plain word.
     static func classifyToken(_ token: String) -> (price: Double?, size: Double?, label: String?) {
-        if token.hasPrefix("$"), let n = pureNumber(String(token.dropFirst())), n > 0 {
+        if let n = dollarValue(token), n > 0 {
             return (n, nil, nil)
         }
         let cleaned = stripEdgePunctuation(token)
@@ -512,6 +564,94 @@ public struct MenuParser {
         return digits.isEmpty ? nil : Double(digits)
     }
 
+    /// The leading run of digits/decimal-point from the start of `s` (stops at the first other
+    /// char), as a raw string so callers can apply superscript-cent normalization.
+    static func leadingDigitString(_ s: String) -> String {
+        var out = ""
+        for c in s { if c.isNumber || c == "." { out.append(c) } else { break } }
+        return out
+    }
+
+    /// Interpret a run of price digits, tolerating this menu style's superscript cents. A run of 4+
+    /// digits with no decimal is read as dollars-and-cents (`1025` → 10.25, `2825` → 28.25, `1055`
+    /// → 10.55) — the superscript cents Vision glues onto the dollars. A 1–3 digit run or any run
+    /// with an explicit decimal is taken at face value, so a real `$150` bottle stays $150 (a
+    /// 3-digit price is genuinely ambiguous; a mispriced pitcher just sinks in the ranking, whereas
+    /// halving a real $150 would be a visible error).
+    static func normalizedDollars(_ digits: String) -> Double? {
+        if digits.isEmpty { return nil }
+        if digits.contains(".") { return Double(digits) }
+        let chars = Array(digits)
+        if chars.count >= 4 {
+            let cut = chars.count - 2
+            if let d = Double(String(chars[..<cut])), let c = Double(String(chars[cut...])) {
+                return d + c / 100
+            }
+        }
+        return Double(digits)
+    }
+
+    /// Repair the common OCR letter↔digit confusions inside a price's digit run — a superscript `5`
+    /// read as `s`/`S` (`$1s"` → `$15`) and a `0` read as `o`/`O`. Applied only to the characters
+    /// after the `$`, so it can't touch a drink name.
+    static func repairPriceDigits(_ s: String) -> String {
+        String(s.map { c in
+            switch c { case "s", "S": return "5"; case "o", "O": return "0"; default: return c }
+        })
+    }
+
+    /// Dollar value of a price token, tolerating OCR noise: a leading `$`, a `$`→`S`/`s` misread,
+    /// glued superscript-cent garble (`$10$5` → 10, `$12"` → 12, `$7.*°` → 7), a superscript `5`
+    /// read as `s` (`$1s"` → 15), and 4-digit cents (`$1055` → 10.55). Requires a `$`/`S` prefix — a
+    /// bare number is not a price here; bare 4-digit prices are handled only in `firstBarePriceToken`.
+    static func dollarValue(_ token: String) -> Double? {
+        var body = token
+        guard let f = body.first, f == "$" || f == "S" || f == "s" else { return nil }
+        body.removeFirst()
+        let digits = leadingDigitString(repairPriceDigits(body))
+        return digits.isEmpty ? nil : normalizedDollars(digits)
+    }
+
+    /// The first whitespace token that is a bare run of 4+ digits — a superscript-cent price printed
+    /// without a `$` — as `(tokenIndex, digits)`. Only 4+ digits qualify, so a name's "60" or a "12"
+    /// size is never mistaken for a price.
+    static func firstBarePriceToken(_ line: String) -> (index: Int, digits: String)? {
+        let tokens = line.split(separator: " ").map(String.init)
+        for (i, t) in tokens.enumerated() {
+            let core = stripEdgePunctuation(t)
+            if core.count >= 4, core.allSatisfy({ $0.isNumber }) { return (i, core) }
+        }
+        return nil
+    }
+
+    /// If `line` is only size/price/separator tokens (no real drink-name word) and carries at least
+    /// one price, returns its smallest price; otherwise nil. Lets a nameless size/price grid be
+    /// adopted as a section-wide price (the smallest = single-serving) that the drinks below inherit.
+    static func barePriceGridSmallest(_ line: String) -> Price? {
+        let clean = collapseDotRuns(replaceSeparators(line))
+        let tokens = clean.split(separator: " ").map(String.init)
+        guard tokens.count >= 2 else { return nil }
+        let noise: Set<Character> = [".", ",", "|", ":", ";", "-", "–", "—", "(", ")", "/", "\"", "*", "°", "'", "•", "·"]
+        var prices: [Double] = []
+        var sawSize = false
+        for t in tokens {
+            let c = classifyToken(t)
+            if let p = c.price { prices.append(p); continue }
+            if c.size != nil { sawSize = true; continue }
+            if t.allSatisfy({ noise.contains($0) }) { continue }   // stray quote/asterisk/degree
+            if isMeasurementOrPrice(stripEdgePunctuation(t).lowercased()) { continue }
+            return nil   // a real word → this is a named item, not a bare grid
+        }
+        guard let smallest = prices.min(), sawSize || prices.count >= 2 else { return nil }
+        return Price(dollars: smallest)
+    }
+
+    static func firstIndex(of ch: Character, in s: String) -> Int? {
+        let chars = Array(s)
+        for i in chars.indices where chars[i] == ch { return i }
+        return nil
+    }
+
     static func lastIndex(of ch: Character, in s: String) -> Int? {
         let chars = Array(s)
         var found: Int? = nil
@@ -540,5 +680,12 @@ private extension MenuItem {
         let combined = descriptionText.map { $0 + " " + text } ?? text
         return MenuItem(name: name, price: price, readABV: readABV, readSize: readSize,
                         category: category, descriptionText: combined)
+    }
+
+    /// Same item with a price attached — used to back-fill a cocktail name from the price line that
+    /// follows it.
+    func withPrice(_ newPrice: Price) -> MenuItem {
+        MenuItem(name: name, price: newPrice, readABV: readABV, readSize: readSize,
+                 category: category, descriptionText: descriptionText)
     }
 }

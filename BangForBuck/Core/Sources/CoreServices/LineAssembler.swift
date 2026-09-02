@@ -13,12 +13,19 @@ import CoreModel
 ///      single line the parser expects.
 ///
 /// Pure and Foundation-free so this make-or-break heuristic is unit-testable against synthetic boxes
-/// (the impure `VisionTextRecognizer` supplies real ones). Column detection is a **recursive X-Y
-/// cut** (R1): it repeatedly splits at the best vertical gutter, so one-, two-, three- and
-/// four-column menus all assemble without fusing a left item to a right one. Genuinely free-form or
-/// very tight layouts still degrade gracefully to fewer columns, with the manual add/edit path as
-/// the safety net; the guards below guarantee it never over-splits a single column at a name/price
-/// gap and never bisects a column bridged by a spanning title.
+/// (the impure `VisionTextRecognizer` supplies real ones). Layout detection is a **recursive X-Y
+/// cut** (R1): at each region it first peels off a **horizontal section band** when a strong
+/// section-sized vertical gap exists, then within a band splits at the best **vertical gutter**.
+/// Peeling bands first is what lets a dense multi-section menu — one that stacks a `name │ size │
+/// price` beer grid above a cocktail list above a wine list in the *same* column strip — assemble
+/// correctly: each section is isolated before column detection runs, so a beer's price is never
+/// sliced into a separate pseudo-column and a shared draft price-grid is never torn apart. One-,
+/// two-, three- and four-column menus still assemble without fusing a left item to a right one.
+/// The horizontal cut only fires on a gap clearly larger than the section's own line spacing, so it
+/// never bands a uniform single-section column; genuinely free-form or very tight layouts still
+/// degrade gracefully, with the manual add/edit path as the safety net. The guards below guarantee
+/// it never over-splits a single column at a name/price gap and never bisects a column bridged by a
+/// spanning title.
 public enum LineAssembler {
 
     /// Assemble ordered lines. `rowToleranceFraction` is how close two boxes' vertical centers must
@@ -30,14 +37,81 @@ public enum LineAssembler {
         let cleaned = observations.filter { !trimmed($0.text).isEmpty }
         guard !cleaned.isEmpty else { return [] }
 
-        // Columns left-to-right, each fully assembled before the next — headers stay with their
-        // own column's items.
-        return columnGroups(cleaned).flatMap { column in
-            assembleRows(column, rowToleranceFraction: rowToleranceFraction)
+        // Blocks in reading order (each section band top-to-bottom, each column left-to-right),
+        // fully assembled before the next — headers stay with their own section/column's items.
+        return layoutBlocks(cleaned).flatMap { block in
+            assembleRows(block, rowToleranceFraction: rowToleranceFraction)
         }
     }
 
-    // MARK: - Column detection (recursive X-Y cut)
+    // MARK: - Layout detection (recursive X-Y cut)
+
+    /// Partition observations into reading-order leaf blocks. At each region a **horizontal section
+    /// band** is peeled first (top then bottom) whenever a strong section-sized vertical gap exists,
+    /// otherwise the region is cut at the best **vertical gutter** (left then right). Peeling bands
+    /// before columns is what keeps a stacked multi-section strip from having its beer prices sliced
+    /// into a pseudo-column. Returns `[observations]` unchanged when no defensible cut exists.
+    static func layoutBlocks(_ observations: [TextObservation]) -> [[TextObservation]] {
+        if let (top, bottom) = bestHorizontalSplit(observations) {
+            return layoutBlocks(top) + layoutBlocks(bottom)
+        }
+        if let (left, right) = bestVerticalSplit(observations) {
+            return layoutBlocks(left) + layoutBlocks(right)
+        }
+        return [observations]
+    }
+
+    // MARK: - Horizontal section banding
+
+    /// A section gap must be at least this fraction of page height in absolute terms — stops a
+    /// merely-slightly-larger line gap inside one section from being read as a section break.
+    static let minSectionGap = 0.03
+    /// …and at least this multiple of the region's median row-to-row spacing. Uniform single-section
+    /// columns have a max gap ≈ their median spacing (ratio ~1), so they never band; a real section
+    /// break sits well above this.
+    static let sectionGapMultiple = 2.2
+    /// A band needs at least this many rows to be worth peeling (so a lone title line isn't a band).
+    static let minBandRows = 2
+
+    /// Peel the single strongest horizontal section band, or `nil`. Finds the largest vertical gap
+    /// between consecutive rows; accepts it only if it clears both the absolute `minSectionGap` and
+    /// `sectionGapMultiple ×` the median row gap, and both resulting bands are real (enough rows and
+    /// observations). Reuses the same row banding the assembler and gutter voter use.
+    static func bestHorizontalSplit(
+        _ group: [TextObservation]
+    ) -> (top: [TextObservation], bottom: [TextObservation])? {
+        guard group.count >= minGroupToSplit else { return nil }
+        let banded = rows(of: group)                       // top-to-bottom
+        guard banded.count >= 4 else { return nil }
+        let centers = banded.map { rowMidY($0) }           // descending (top first)
+        var gaps: [Double] = []
+        for i in 0..<(centers.count - 1) { gaps.append(centers[i] - centers[i + 1]) }
+        guard let maxGap = gaps.max() else { return nil }
+        let med = median(gaps)
+        guard maxGap >= max(minSectionGap, med * sectionGapMultiple) else { return nil }
+        let cutIndex = gaps.firstIndex(of: maxGap)!        // rows[0...cutIndex] | rows[cutIndex+1...]
+        let topRows = Array(banded[0...cutIndex])
+        let bottomRows = Array(banded[(cutIndex + 1)...])
+        let top = topRows.flatMap { $0 }
+        let bottom = bottomRows.flatMap { $0 }
+        guard topRows.count >= minBandRows, bottomRows.count >= minBandRows,
+              top.count >= minSideCount, bottom.count >= minSideCount
+        else { return nil }
+        return (top, bottom)
+    }
+
+    private static func rowMidY(_ row: [TextObservation]) -> Double {
+        median(row.map { $0.box.midY })
+    }
+
+    private static func median(_ values: [Double]) -> Double {
+        let s = values.sorted()
+        guard !s.isEmpty else { return 0 }
+        let mid = s.count / 2
+        return s.count % 2 == 0 ? (s[mid - 1] + s[mid]) / 2 : s[mid]
+    }
+
+    // MARK: - Column detection (vertical gutter)
 
     private static let bins = 100
     /// A resulting column must span at least this fraction of page width — rejects a single column

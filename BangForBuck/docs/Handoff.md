@@ -5,6 +5,136 @@ here — keep this lean. Newest note on top; each new note says plainly what it 
 
 ---
 
+## ⇢ STATUS (2026-09-02) — OCR/parse pipeline is good enough; pivoting to breadth + other features
+
+All five test menus now parse acceptably. M/G (the hard one) is confirmed on device: horizontal
+banding done (part 7), superscript-cent prices + shared-grid inheritance (part 8), cocktail
+back-fill + `$1s`/`gloss` fixes (part 9). IPAs rank ~0.26/0.21 std-drinks/$; beers keep prices;
+cocktails back-fill from their own price lines. Owner's call: **stop tuning the parser on M/G** and
+(a) test the pipeline on NEW menus to find the next real failure class, and (b) start building out
+other app functionality.
+
+**Known residuals (accepted, low value — don't chase without a new failing menu):**
+- Fully OCR-shredded price tokens (`Sis"`, `Sir"`, `glass Sir"`) stay unpriced → "Not sure".
+- The happy-hour beer mini-grid `16oz $5" | 220z 59*` isn't recognized (OCR typo'd `22oz`→`220z`,
+  price `59*`), so those 3 happy-hour beers don't inherit.
+- Occasional recipe line with 0 recipe-keywords (e.g. "tito's vodka ruby red grapefruit") lands in
+  the "Not sure" bucket as a priceless item — harmless, never ranks.
+
+**Suggested next steps (new session):**
+1. Run 3–5 brand-new menus through the DEBUG OCR export; triage by failure class before coding.
+2. Wire `ImageDeskew.flattened` into `VisionTextRecognizer` + a "retake straighter" capture hint
+   (El Perrito angled-photo case — still PENDING from earlier).
+3. Fix `Tooling/Data/beverages.json` `"abv": 2/.4` → `2.4` (blocks the brand-table generator).
+4. Build the `AppTarget/Features/Compare/` store-calculator screen (StoreComparison is ready in Core).
+5. Optional cosmetic: ResultsView size chip shows 1.5 oz (one decimal), not "2 oz", for shots.
+
+Everything below is the detailed parser/assembler history; read newest-first as needed.
+
+---
+
+## 2026-09-02 (part 9) — Cocktail back-fill vs grid forward-inherit; $1s repair; gloss vessel
+
+Second M/G device pass (post part 8): IPAs now rank correctly (~0.26, 0.21 std/$), but two bugs from
+the part-8 grid change surfaced, both fixed in `MenuParser`:
+
+**1. `Strawberry Fields $1` (price leaked forward).** The part-8 grid handler always set the section
+`headerPrice` forward. That's right for DRAFTS (grid *leads* a list) but wrong for the Specialty
+cocktails, which are laid out *name-then-price* (`Strawberry Fields` line, then `glass $14 | pitcher
+$49`). Each cocktail's price line set a forward price that leaked onto the *next* cocktail's name.
+Fix: the bare-grid branch now **back-fills** the smallest price onto the immediately-preceding
+priceless, rankable name (`backfillIndex`) when one is waiting; it only forward-inherits when a
+section header just started the block (DRAFTS, happy-hour). `backfillIndex` is cleared by any header
+and by any priced emit, so a price never crosses a section or item boundary. Validated on the real
+sequence: DRAFTS/happy-hour forward ($7/$9), every Specialty cocktail back-fills its own price
+(Paloma $13, Full Bloom $15, Strawberry Fields $14, Espresso Martini $15).
+
+**2. `gloss (pitcher) $13` ranked as a drink.** `gloss`/`pitchor` are Vision's misreads of
+`glass`/`pitcher`; added them to `sizeWordTable` + `sizeOnlyWords` so the price line is a nameless
+grid (→ back-fill) instead of a "gloss" item.
+
+**Also:** `$1s"` (a superscript `5` read as `s`) now repairs to `$15` via `repairPriceDigits`
+(`s→5`, `o→0`, applied only after the `$`); `barePriceGridSmallest` ignores stray `"`/`*`/`°` tokens
+and requires a size cue or ≥2 prices; and a pure wine sub-label (`whites`/`reds`/`bubbles`) no longer
+resets the shared `glass $14 | bottle $58` wine price (so those wines inherit ~$14 instead of falling
+to "Not sure"). `Moët Impérial Brut` correctly stays $150 (ranks low, as it should).
+
+New tests in `MenuParserConfidenceTests` (back-fill vs forward, `$1s` repair, `gloss` suppression).
+Residual unchanged: OCR-shredded lines like `Sis"`/`Sir"` stay unpriced; the `16oz $5" | 220z 59*`
+happy-hour beer grid isn't recognized (OCR typo'd size/price).
+
+---
+
+## 2026-09-02 (part 8) — Superscript-cent prices, bare grids, section-price inheritance (M/G)
+
+Device re-dump of M/G after part 7 confirmed the banding fix (clean 138-line assembly; beers keep
+prices, DRAFTS grid intact). Three follow-on parser bugs it exposed, all now fixed in `MenuParser`:
+
+**1. Superscript-cent price garble.** M/G prints cents as tiny superscripts; Vision returns them as
+junk (`$8°5`, `$10$5`, `$1055`, `$12"`, or bare `1025 1325 2825`). Old scanner took the *last* `$`/
+number, so `$10$5` → $5 (with `$10` stranded in the name) and bare `2825` → $2825. New helpers
+`leadingDigitString` / `normalizedDollars` / `dollarValue`: read the **first** `$`-anchored price,
+tolerate a `$`→`S` misread and glued garble, and interpret a **4-digit** run as dollars-and-cents
+(`1055`→$10.55, `1025`→$10.25, `2825`→$28.25). 1–3 digit runs stay face value so a real `$150`
+champagne isn't halved (a 3-digit price is ambiguous; a mispriced pitcher just sinks harmlessly).
+`parseItem` also gained a bare-4-digit path (`firstBarePriceToken`) so Guinness `…1025 1325 2825` →
+$10.25 with name `Guinness Stout`. `classifyToken` now uses `dollarValue`.
+
+**2. Known name freed.** Fixing `$10$5` also strips `$10` from the name, so `High Noon Pineapple`
+resolves to the brand cleanly (was `High Noon Pineapple $10`).
+
+**3. Shared size/price grid → section price.** DRAFTS lists each beer with no per-item price; the
+`16oz $7 | 22oz $12 | Pitcher $25` grid prices them all. `barePriceGridSmallest` detects a nameless
+size/price-only line and adopts its **smallest** (single-serving) price as the section `headerPrice`,
+which the listed drafts inherit (Blue Moon, Stella, Michelob Ultra, etc. now rank instead of →"Not
+sure"); the grid line itself is dropped. Guard: `isRankableName` now rejects a name made only of
+section words, and `sectionWords` gained `bubbles`/`rosé`/`rose`/`rosados`, so a bare `whites`/`reds`
+sub-label under an inherited wine price does **not** rank as a phantom $14 drink.
+
+All paths validated in Python against the exact device lines and against regression lines (Southside
+`BUDWEISER ABV 5% - 5.50`→$5.50, `Dogfish Head 60 MIN IPA … - 7.50`→$7.50 with `60` kept in name,
+`House Cabernet glass $9 bottle $32`→2-size split). New tests in `MenuParserConfidenceTests`.
+Residual (left, low value): the happy-hour mini-grid `16oz $5" | 220z 59*` isn't recognized (OCR
+typo `220z`/`59*`), and OCR-shredded cocktail-price lines like `Sir"`/`Sis"` stay unpriced.
+
+---
+
+## 2026-09-01 (part 7) — Horizontal section banding (X-Y cut completed) for dense menus
+
+**Problem.** Dense multi-section menus (the "M/G" case) stack different layouts in one vertical
+strip — a `name │ size │ price` bottle grid above a specialty-cocktail list above a wine list, with a
+shared-price draft grid on the right. The vertical-only cut sliced the bottle prices into a separate
+pseudo-column (beers → priceless → "Not sure") and tore the draft price-grid apart.
+
+**Fix (`LineAssembler`).** The recursive cut now alternates axes: `layoutBlocks` peels a **horizontal
+section band** first (top-then-bottom) whenever a strong section-sized vertical gap exists, then falls
+to the existing **vertical gutter** cut within each band. Isolating a section before column detection
+means the confusing wide content from *other* sections is gone, so within the bottle band no vertical
+cut fires (narrow price column fails the span guard) and each beer keeps `name size price` on one
+line; the draft grid stays whole. New: `bestHorizontalSplit` + constants `minSectionGap` 0.03,
+`sectionGapMultiple` 2.2 (gap must clear both the absolute floor AND 2.2× the region's median row
+gap), `minBandRows` 2. `columnGroups` (vertical-only) is retained but no longer the entry point.
+
+**Why it won't regress the working menus.** The horizontal cut only fires on a gap clearly larger
+than a section's own line spacing, so a uniform single-section column (max gap ≈ median gap, ratio ~1)
+never bands, and a lone-title top band fails the min-observation guard. Validated in Python
+(`xycut.py`/`xycut2.py`) against a faithful full-structure M/G transcription (`mg_full.txt`, 192 obs):
+M/G now segments correctly — every BOTTLES beer keeps its price, the DRAFTS grid + all draft names
+survive (`Pacifico Clara`, `Guinness Stout...1025 1325 2825`), cocktails keep glass/pitcher price
+lines, and Wine/Happy-hour/Food band cleanly. All 7 existing `LineAssemblerColumnTests` fixtures and
+the Southside/Reservoir/Exclusive real-menu outputs are **unchanged**. New regression test:
+`LineAssemblerRealMenuTests.testDenseMultiSectionMenuKeepsPricesWithSectionBanding` (real M/G coords;
+asserts beers keep prices, draft grid intact, and no orphaned bare-price line).
+
+**⚠ MUST device-verify.** This is the one change validated partly on hand-transcribed data (the M/G
+full transcription is faithful but compressed; the Reservoir/Southside/Exclusive checks used earlier
+*subsets*, whose omitted rows create phantom vertical gaps that don't perfectly mirror a full device
+dump). Before trusting: re-run the DEBUG OCR export on **all five** menus on device and confirm none
+of the four working menus regressed. If any do, this is a single self-contained commit — revert
+`layoutBlocks`→`columnGroups` in `lines(from:)` to fall straight back to vertical-only.
+
+---
+
 ## 2026-09-01 (part 6) — Food/URL dropped; cocktail math audited
 
 **Food dropped entirely (`MenuParser`).** A food-section header ("FOOD", "KITCHEN", "Small Plates",

@@ -106,4 +106,99 @@ final class MenuParserConfidenceTests: XCTestCase {
         XCTAssertEqual(items.first?.price, Price(dollars: 7))
         XCTAssertTrue(items.first?.name.contains("Tacos") ?? false)
     }
+
+    // MARK: superscript-cent prices (the M/G menu prints cents as tiny superscripts; Vision mangles
+    // them into "$8°5", "$10$5", "$1055", or bare "1025 1325 2825")
+
+    func testGluedSuperscriptCentPriceTakesDollarsAndFreesTheName() {
+        // "$10$5" used to read as $5 with a stranded "$10" polluting the name.
+        let item = parser.parse(["High Noon Pineapple 12oz $10$5"]).first
+        XCTAssertEqual(item?.price, Price(dollars: 10))
+        XCTAssertEqual(item?.name, "High Noon Pineapple")   // clean name → resolves to the known brand
+        XCTAssertEqual(parser.parse(["Miller Lite 16oz $8°5"]).first?.price, Price(dollars: 8))
+    }
+
+    func testFourDigitCentsAreDollarsAndCents() {
+        XCTAssertEqual(parser.parse(["Surfside Iced Tea Lemonade Vodka $1055"]).first?.price,
+                       Price(dollars: 10.55))
+    }
+
+    func testBareFourDigitMultiPriceTakesFirstServing() {
+        // Guinness "Stout...1025 | 1325 | 2825" → $10.25 (not a literal $2825), name stays clean.
+        let item = parser.parse(["Guinness Stout...1025 | 1325 | 2825"]).first
+        XCTAssertEqual(item?.price, Price(dollars: 10.25))
+        XCTAssertEqual(item?.name, "Guinness Stout")
+    }
+
+    func testRealThreeDigitPriceIsNotHalved() {
+        // A genuine 3-digit price (champagne) must survive intact — only 4-digit runs are cents.
+        XCTAssertEqual(parser.parse(["Moët Impérial Brut $150"]).first?.price, Price(dollars: 150))
+    }
+
+    // MARK: shared size/price grid → section price the listed drinks inherit
+
+    func testBareSizePriceGridPricesTheDraftsBelow() {
+        // The DRAFTS section: a nameless "16oz $7 | 22oz $12 | Pitcher $25" grid prices every draft
+        // listed under it, none of which carries its own price.
+        let items = parser.parse([
+            "DRAFTS",
+            "16oz $7 | 22oz $12 | Pitcher $25",
+            "Pacifico Clara",
+            "Stella Artois",
+        ])
+        let pacifico = items.first { $0.name.contains("Pacifico") }
+        let stella = items.first { $0.name.contains("Stella") }
+        XCTAssertEqual(pacifico?.price, Price(dollars: 7), "draft inherits the grid's single-serving price")
+        XCTAssertEqual(stella?.price, Price(dollars: 7))
+        XCTAssertEqual(pacifico?.category, .draftBeer)
+        // The grid line itself is not emitted as a bogus "$7" drink.
+        XCTAssertFalse(items.contains { $0.name.contains("16oz") || $0.name.contains("Pitcher") })
+    }
+
+    func testBareWineSubLabelDoesNotRankOnInheritedPrice() {
+        // Under a "glass $14 | bottle $58" wine price, a stray "whites"/"reds" sub-label must not
+        // rank as a $14 drink.
+        let items = parser.parse([
+            "Wine",
+            "glass $14 | bottle $58",
+            "whites",
+            "Kim Crawford Sauv Blanc",
+        ])
+        XCTAssertNil(items.first { $0.name.lowercased() == "whites" }?.price)
+        XCTAssertEqual(items.first { $0.name.contains("Kim Crawford") }?.price, Price(dollars: 14))
+    }
+
+    // MARK: name-then-price cocktails (price line FOLLOWS the name) vs grid-leads-list
+
+    func testCocktailPriceLineBackfillsOntoPrecedingNameNotTheNext() {
+        // The M/G Specialty layout: each cocktail is a name line then its own "glass|pitcher" price
+        // line. The price must attach to the name above it — and must NOT leak onto the next cocktail.
+        let items = parser.parse([
+            "Specialty Cocktails",
+            "Tito's Paloma",
+            "glass $13 | pitchor $45",
+            "Full Bloom",
+            "glass $1s\"",                 // OCR'd $15 (superscript 5 read as 's')
+            "Strawberry Fields",
+            "glass $14 | pitcher $49",
+        ])
+        XCTAssertEqual(items.first { $0.name.contains("Paloma") }?.price, Price(dollars: 13))
+        XCTAssertEqual(items.first { $0.name.contains("Full Bloom") }?.price, Price(dollars: 15))
+        // The bug this guards: Strawberry Fields used to inherit the previous line's $1, not its $14.
+        XCTAssertEqual(items.first { $0.name.contains("Strawberry Fields") }?.price, Price(dollars: 14))
+        // "gloss"/"pitchor" (OCR vessel words) never rank as their own drink.
+        XCTAssertFalse(items.contains { $0.name.lowercased().hasPrefix("gloss") || $0.name.lowercased() == "pitchor" })
+    }
+
+    func testGridLeadingAListStillForwardInherits() {
+        // The opposite layout (grid first, then the priced-together list) must still forward-inherit.
+        let items = parser.parse([
+            "Happy Hour Cocktails",
+            "glass $9 | pitcher $35",
+            "Strawberry Fields",
+            "Mission Margarita",
+        ])
+        XCTAssertEqual(items.first { $0.name.contains("Strawberry") }?.price, Price(dollars: 9))
+        XCTAssertEqual(items.first { $0.name.contains("Mission") }?.price, Price(dollars: 9))
+    }
 }

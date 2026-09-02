@@ -94,4 +94,55 @@ final class LineAssemblerRealMenuTests: XCTestCase {
         XCTAssertTrue(lines.contains { $0.contains("Miller") && $0.contains("High") && $0.contains("Life") })
         XCTAssertTrue(lines.contains { $0.contains("Corona") && !$0.contains("Miller") })
     }
+
+    /// A dense multi-section menu (the "M/G" case): the left strip stacks a `name │ size │ price`
+    /// bottle grid above a specialty-cocktail list above a wine list, while the right strip carries a
+    /// shared-price draft grid. A vertical-only cut slices the bottle prices into a pseudo-column and
+    /// tears the draft grid apart. Horizontal-band peeling isolates each section first, so every beer
+    /// keeps its price on one line and the draft grid stays whole. Real M/G coordinates.
+    func testDenseMultiSectionMenuKeepsPricesWithSectionBanding() {
+        var o: [TextObservation] = []
+        // Title (spans the center gutter).
+        o += row([("DRINKS", 0.3419, 0.6581)], 0.955)
+        // Bottle band (left) beside the draft band (right).
+        o += row([("BOTTLES", 0.1283, 0.2911), ("CANS", 0.3306, 0.4375),
+                  ("DRAFTS", 0.6643, 0.8093)], 0.882)
+        o += row([("Miller", 0.1875, 0.2401), ("Lite", 0.2434, 0.2763), ("16oz", 0.2796, 0.3289), ("$8°5", 0.3322, 0.3816),
+                  ("16oz", 0.5789, 0.6118), ("$7", 0.6151, 0.6579), ("|", 0.6612, 0.6711),
+                  ("22oz", 0.6743, 0.7138), ("$12", 0.7171, 0.7632), ("|", 0.7664, 0.7763),
+                  ("Pitcher", 0.7796, 0.8421), ("$25", 0.8454, 0.898)], 0.862)
+        o += row([("Corona", 0.2007, 0.2669), ("16oz", 0.2697, 0.3187), ("$8°5", 0.3215, 0.3684),
+                  ("Pacifico", 0.6743, 0.7484), ("Clara", 0.7504, 0.8026)], 0.843)
+        o += row([("Modelo", 0.2007, 0.2673), ("16oz", 0.2697, 0.3191), ("$8°5", 0.3215, 0.3684),
+                  ("Michelob", 0.6711, 0.7553), ("Ultra", 0.7574, 0.8059)], 0.824)
+        o += row([("Downeast", 0.0888, 0.1838), ("Cider", 0.1867, 0.2356), ("Original", 0.2385, 0.3133),
+                  ("Blend", 0.3162, 0.3709), ("12oz", 0.3738, 0.4198), ("$10$5", 0.4227, 0.477)], 0.727)
+        o += row([("Guinness", 0.5888, 0.6723), ("Stout", 0.6752, 0.7788), ("$10", 0.7903, 0.8277)], 0.707)
+        // Specialty-cocktail section (left).
+        o += row([("Specialty", 0.299, 0.4971), ("Cocktails", 0.5046, 0.7043)], 0.674)
+        o += row([("Tito's", 0.2303, 0.2821), ("Paloma", 0.2845, 0.3618)], 0.646)
+        o += row([("glass", 0.2039, 0.2385), ("$13", 0.2414, 0.2788), ("pitcher", 0.2932, 0.345), ("$45", 0.3479, 0.3914)], 0.635)
+        // Wine section (left), far below.
+        o += row([("Wine", 0.2303, 0.3651)], 0.306)
+        o += row([("glass", 0.1875, 0.2336), ("$14", 0.2368, 0.2829), ("bottle", 0.2961, 0.3454), ("$58", 0.3487, 0.4013)], 0.282)
+        o += row([("Kim", 0.0658, 0.1028), ("Crawford", 0.1053, 0.1916), ("Chardonnay", 0.1702, 0.2829)], 0.248)
+
+        let lines = LineAssembler.lines(from: o)
+
+        // Every bottle keeps its size AND price on one line — not sliced into a price pseudo-column.
+        XCTAssertTrue(lines.contains("Miller Lite 16oz $8°5"), "beer must keep its price: \(lines)")
+        XCTAssertTrue(lines.contains("Corona 16oz $8°5"))
+        XCTAssertTrue(lines.contains("Modelo 16oz $8°5"))
+        XCTAssertTrue(lines.contains("Downeast Cider Original Blend 12oz $10$5"))
+        // The shared draft price grid stays intact on one line.
+        XCTAssertTrue(lines.contains { $0.contains("16oz") && $0.contains("22oz") && $0.contains("Pitcher") },
+                      "draft grid must not be torn apart: \(lines)")
+        // A two-word draft name is not split across columns.
+        XCTAssertTrue(lines.contains { $0.contains("Pacifico") && $0.contains("Clara") })
+        // The cocktail's glass/pitcher price line survives.
+        XCTAssertTrue(lines.contains { $0.contains("glass") && $0.contains("$13") && $0.contains("pitcher") })
+        // No price is orphaned onto a line of its own (the vertical-only failure mode).
+        XCTAssertFalse(lines.contains("$8°5"), "a bare price line means the price column was orphaned")
+        XCTAssertFalse(lines.contains("$10$5"))
+    }
 }
