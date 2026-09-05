@@ -139,6 +139,8 @@ public struct ContainerSize: Equatable, Hashable, Sendable, Identifiable {
     public static let can25 = ContainerSize(label: "25 oz", volume: Volume(fluidOunces: 25))
 
     /// Wine / spirits bottles by metric size.
+    public static let ml50 = ContainerSize(label: "50 mL (nip)", volume: Volume(milliliters: 50))
+    public static let ml200 = ContainerSize(label: "200 mL", volume: Volume(milliliters: 200))
     public static let ml187 = ContainerSize(label: "187 mL (split)", volume: Volume(milliliters: 187))
     public static let ml375 = ContainerSize(label: "375 mL (half)", volume: Volume(milliliters: 375))
     public static let ml500 = ContainerSize(label: "500 mL", volume: Volume(milliliters: 500))
@@ -150,6 +152,51 @@ public struct ContainerSize: Equatable, Hashable, Sendable, Identifiable {
     /// Ordered for a picker: beer/seltzer cans first, then wine/spirits bottles ascending.
     public static let presets: [ContainerSize] = [
         can12, can16, can192, can24, can25,
-        ml187, ml375, ml500, ml750, liter1, liter15, liter175,
+        ml50, ml187, ml200, ml375, ml500, ml750, liter1, liter15, liter175,
     ]
+
+    /// The preset nearest a catalog-stated size, or a one-off `ContainerSize` when nothing is close.
+    /// Store catalogs state sizes in millilitres, including ones no picker should carry (a 5 L box,
+    /// a 720 mL sake, a 700 mL import), so an exact-preset-only lookup would silently mis-size
+    /// those. Tolerance is a relative 1%: tight enough that 720 mL keeps its own label rather than
+    /// being rounded to the 24 oz can it happens to sit near, loose enough that 749 mL snaps to 750.
+    public static func closest(toMilliliters milliliters: Double) -> ContainerSize {
+        guard milliliters > 0 else { return can12 }
+
+        var best: ContainerSize?
+        var bestGap = Double.infinity
+        for preset in presets {
+            let gap = abs(preset.volume.milliliters - milliliters)
+            if gap < bestGap { bestGap = gap; best = preset }
+        }
+        if let best, bestGap <= milliliters * 0.01 { return best }
+
+        // Foundation-free labels (CoreServices imports no Foundation, so no String(format:)).
+        if milliliters >= 1000 {
+            let liters = milliliters / 1000
+            let whole = liters.rounded()
+            let text = abs(liters - whole) < 0.01 ? "\(Int(whole))" : "\(liters)"
+            return ContainerSize(label: "\(text) L", volume: Volume(milliliters: milliliters))
+        }
+        let wholeMilliliters = Int(milliliters.rounded())
+        return ContainerSize(label: "\(wholeMilliliters) mL", volume: Volume(milliliters: milliliters))
+    }
+
+    /// Same idea in fluid ounces, so an unusual beer size keeps an ounce label a shopper recognizes
+    /// ("14.9 oz" for a Guinness can) instead of being rendered as millilitres.
+    public static func closest(toFluidOunces ounces: Double) -> ContainerSize {
+        guard ounces > 0 else { return can12 }
+
+        var best: ContainerSize?
+        var bestGap = Double.infinity
+        for preset in presets {
+            let gap = abs(preset.volume.fluidOunces - ounces)
+            if gap < bestGap { bestGap = gap; best = preset }
+        }
+        if let best, bestGap <= ounces * 0.02 { return best }
+
+        let whole = ounces.rounded()
+        let label = abs(ounces - whole) < 0.05 ? "\(Int(whole)) oz" : "\(ounces) oz"
+        return ContainerSize(label: label, volume: Volume(fluidOunces: ounces))
+    }
 }

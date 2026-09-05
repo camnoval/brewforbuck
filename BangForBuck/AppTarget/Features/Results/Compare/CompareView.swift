@@ -1,3 +1,4 @@
+//
 //  CompareView.swift
 //  BangForBuck
 //
@@ -10,19 +11,22 @@ import CoreContracts
 import CoreServices
 
 /// The store calculator (Goal 2): standing in a liquor-store aisle, add the packages you're weighing
-/// — a 12-pack, a 750 mL bottle, a 1.75 L handle — and see them ranked by the *same* metric the menu
-/// scanner uses, standard drinks per dollar, plus the dollars-per-standard-drink a shopper actually
-/// compares. No camera, no OCR: everything here is typed, so the numbers are as good as the shelf tag.
+/// and see them ranked by the same metric the menu scanner uses, standard drinks per dollar, plus
+/// the dollars-per-standard-drink a shopper actually compares.
 ///
-/// State lives in `CompareViewModel` → the pure `StoreSession`. This view only renders and dispatches
-/// edits, and it reuses the medal/chip/pill vocabulary from `Features/Shared/ValueChips.swift` so a
-/// ranked shelf row reads exactly like a ranked menu row.
+/// The add flow is **search first**. Typing two or three letters of a product name is the fastest
+/// path to a filled-in form, and a picked product brings its own strength and package shape with it
+/// (a wine opens at 750 mL, a Coors at a 12 oz six pack), so most additions need only a price. A
+/// product the catalog doesn't carry falls through to a blank form, so search is the front door and
+/// never a wall.
+///
+/// State lives in `CompareViewModel` and the pure `StoreSession`. This view renders and dispatches.
 struct CompareView: View {
-    @StateObject private var viewModel = CompareViewModel()
+    @StateObject private var viewModel = CompareViewModel(catalog: BundledStoreCatalog.shared)
 
     /// The product currently open in the edit sheet (`nil` = closed).
     @State private var editing: EditableProduct?
-    /// Whether the "add a product" sheet is open.
+    /// Whether the add flow is open.
     @State private var adding = false
 
     var body: some View {
@@ -57,17 +61,7 @@ struct CompareView: View {
             }
         }
         .sheet(isPresented: $adding) {
-            AddProductSheet(brands: viewModel.brands) { draft in
-                viewModel.addProduct(
-                    name: draft.name,
-                    unitFluidOunces: draft.unitFluidOunces,
-                    count: draft.count,
-                    abv: draft.abv,
-                    abvIsEstimated: draft.abvIsEstimated,
-                    brandLabel: draft.brandLabel,
-                    priceDollars: draft.priceDollars
-                )
-            }
+            AddProductFlow(viewModel: viewModel)
         }
         .sheet(item: $editing) { product in
             EditProductSheet(
@@ -84,7 +78,7 @@ struct CompareView: View {
 
     private var introSection: some View {
         Section {
-            Text("Add what's on the shelf and we'll rank it by how much alcohol you get per dollar — the same measure the menu scanner uses, applied to the whole package.")
+            Text("Add what's on the shelf and we'll rank it by how much alcohol you get per dollar, the same measure the menu scanner uses, applied to the whole package.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -134,7 +128,7 @@ struct CompareView: View {
     private var addProductSection: some View {
         Section {
             Button { adding = true } label: {
-                Label("Add a product", systemImage: "plus.circle.fill")
+                Label("Search for a product", systemImage: "magnifyingglass")
             }
         }
     }
@@ -244,10 +238,7 @@ private struct NeedsPriceRow: View {
     }
 
     private var parsedPrice: Double? {
-        guard let value = Double(priceText.replacingOccurrences(of: "$", with: "")
-                                          .trimmingCharacters(in: .whitespaces)),
-              value > 0 else { return nil }
-        return value
+        PriceText.parse(priceText)
     }
 
     private func submit() {
@@ -269,11 +260,11 @@ private struct EmptyCompareState: View {
                 .foregroundStyle(.secondary)
             Text("Nothing to compare yet")
                 .font(.headline)
-            Text("Add a six-pack, a bottle of wine, a handle of whiskey — anything with a price on the tag.")
+            Text("Search for a six pack, a bottle of wine, a handle of whiskey, then add what the tag says.")
                 .font(.footnote)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
-            Button("Add a product", action: onAdd)
+            Button("Search for a product", action: onAdd)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .padding(.top, 2)
@@ -295,169 +286,323 @@ private struct CompareExplainer: View {
                 .font(.caption.monospaced())
             Text("value = standard drinks ÷ price")
                 .font(.caption.monospaced())
-            Text("Picking a brand fills in that product's typical label ABV — an estimate, flagged as one. Type the number off the can and the flag clears.")
+            Text("Picking a product fills in its typical strength and package. That strength is an estimate and is flagged as one. Type the number off the label and the flag clears.")
                 .foregroundStyle(.secondary)
         }
         .font(.footnote)
     }
 }
 
-// MARK: - Add sheet
+// MARK: - Add flow: search, then the form
 
-/// What the add form produces. Kept as a plain struct so the sheet has no dependency on the view
-/// model — it hands one of these back and the caller decides what to do with it.
-struct ProductDraft {
-    var name: String
-    var unitFluidOunces: Double
-    var count: Int
-    var abv: Double
-    /// True while the ABV is still the catalog's label-typical figure (§11).
-    var abvIsEstimated: Bool
-    var brandLabel: String?
-    var priceDollars: Double?
-}
-
-private struct AddProductSheet: View {
-    let brands: [KnownBeverage]
-    let onAdd: (ProductDraft) -> Void
+/// Search comes first. The field is focused on open, results rank live as you type, and picking one
+/// pushes a form that is already filled in except for the price.
+private struct AddProductFlow: View {
+    @ObservedObject var viewModel: CompareViewModel
 
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var searchFocused: Bool
 
-    @State private var name = ""
-    @State private var brandLabel: String?
-    @State private var sizeChoice: SizeChoice = .preset(ContainerSize.can12)
-    @State private var customOunces = ""
-    @State private var count = 6
-    @State private var abvText = ""
-    /// Exactly what a brand pick wrote into `abvText`. While the field still holds that string the
-    /// ABV is the catalog's label-typical figure — an estimate (§11). The moment the shopper types
-    /// anything else, they've read it off the can and it's `.read`. Deriving the flag from the text
-    /// (rather than tracking edits) keeps a *second* brand pick from clearing it by mistake.
-    @State private var catalogABVText: String?
-    @State private var priceText = ""
-    @State private var pickingBrand = false
+    @State private var query = ""
+    @State private var prefill: ProductPrefill?
+    /// Cached rather than recomputed in `body`: SwiftUI evaluates a body several times per
+    /// keystroke, and once this catalog is tens of thousands of products that is the difference
+    /// between typing smoothly and typing through treacle.
+    @State private var matches: [CatalogProduct] = []
 
-    private var abvIsEstimated: Bool {
-        guard let catalogABVText else { return false }
-        return abvText == catalogABVText
-    }
+    private var trimmedQuery: String { query.trimmingCharacters(in: .whitespaces) }
 
     var body: some View {
         NavigationStack {
-            Form {
+            List {
                 Section {
-                    TextField("Name", text: $name)
-
-                    Button {
-                        pickingBrand = true
-                    } label: {
-                        HStack {
-                            Label("Pick a known brand", systemImage: "list.bullet.rectangle")
-                            Spacer()
-                            if let brandLabel {
-                                Text(brandLabel)
-                                    .font(.footnote)
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                        TextField("Search products", text: $query)
+                            .focused($searchFocused)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.words)
+                            .submitLabel(.search)
+                        if !query.isEmpty {
+                            Button {
+                                query = ""
+                                searchFocused = true
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
                                     .foregroundStyle(.secondary)
-                                    .lineLimit(1)
                             }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Clear search")
                         }
                     }
                 } footer: {
-                    Text("Picking a brand fills in the name and its typical ABV, so you only enter size, count, and price.")
+                    Text("\(viewModel.searchableProductCount) products. Picking one fills in its typical strength and usual package, so you only add the price.")
                 }
 
-                Section {
-                    Picker("Container", selection: $sizeChoice) {
-                        ForEach(ContainerSize.presets, id: \.label) { preset in
-                            Text(preset.label).tag(SizeChoice.preset(preset))
+                if trimmedQuery.isEmpty {
+                    Section {
+                        SearchHintRow()
+                    }
+                } else if matches.isEmpty {
+                    Section {
+                        Text("Nothing matched \"\(trimmedQuery)\".")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        manualEntryButton
+                    }
+                } else {
+                    Section {
+                        ForEach(matches) { product in
+                            Button {
+                                prefill = viewModel.prefill(for: product)
+                            } label: {
+                                CatalogRow(product: product)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        Text("Other…").tag(SizeChoice.custom)
+                    } header: {
+                        SectionHeader(title: "Matches", systemImage: "list.bullet")
                     }
 
-                    if sizeChoice == .custom {
-                        HStack {
-                            Text("Size")
-                            Spacer()
-                            TextField("fl oz", text: $customOunces)
-                                .keyboardType(.decimalPad)
-                                .multilineTextAlignment(.trailing)
-                                .frame(maxWidth: 90)
-                            Text("oz").foregroundStyle(.secondary)
-                        }
+                    Section {
+                        manualEntryButton
                     }
-
-                    Stepper(value: $count, in: 1...48) {
-                        HStack {
-                            Text("How many")
-                            Spacer()
-                            Text("\(count)")
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                } header: {
-                    Text("Package")
-                } footer: {
-                    if let ounces = unitOunces {
-                        Text("Total: \(ValueFormat.ounces(ounces * Double(count)))")
-                    }
-                }
-
-                Section {
-                    HStack {
-                        Text("ABV")
-                        Spacer()
-                        TextField("e.g. 5", text: $abvText)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(maxWidth: 90)
-                        Text("%").foregroundStyle(.secondary)
-                    }
-                    HStack {
-                        Text("Price")
-                        Spacer()
-                        TextField("whole package", text: $priceText)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(maxWidth: 130)
-                    }
-                } header: {
-                    Text("Strength and price")
-                } footer: {
-                    Text("Leave the price blank if you haven't seen the tag yet — it'll wait in its own list rather than be guessed at.")
                 }
             }
+            .listStyle(.insetGrouped)
             .navigationTitle("Add a product")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") { add() }
-                        .disabled(!isValid)
+            }
+            .navigationDestination(item: $prefill) { filled in
+                ProductForm(prefill: filled) { draft in
+                    viewModel.addProduct(
+                        name: draft.name,
+                        unitFluidOunces: draft.unitFluidOunces,
+                        count: draft.count,
+                        abv: draft.abv,
+                        abvIsEstimated: draft.abvIsEstimated,
+                        abvNote: draft.abvNote,
+                        priceDollars: draft.priceDollars
+                    )
+                    dismiss()
                 }
             }
-            .sheet(isPresented: $pickingBrand) {
-                BrandPickerSheet(brands: brands) { brand in
-                    let seeded = String(format: "%g", brand.abv)
-                    name = brand.label
-                    brandLabel = brand.label
-                    abvText = seeded
-                    catalogABVText = seeded        // catalog figure — a guess until the user overtypes it
-                    sizeChoice = .preset(Self.defaultContainer(for: brand.category))
-                    count = Self.defaultCount(for: brand.category)
-                }
+            .onChange(of: query) { _, newValue in
+                matches = viewModel.search(newValue)
+            }
+            .task {
+                // A sheet's first responder isn't settled the instant it appears, so give the
+                // keyboard a beat before claiming focus or it silently doesn't take.
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                searchFocused = true
             }
         }
     }
 
-    // MARK: Validation + submit
+    private var manualEntryButton: some View {
+        Button {
+            prefill = viewModel.blankPrefill(named: trimmedQuery)
+        } label: {
+            Label(trimmedQuery.isEmpty ? "Enter a product by hand" : "Add \"\(trimmedQuery)\" by hand",
+                  systemImage: "square.and.pencil")
+        }
+    }
+}
+
+private struct SearchHintRow: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Start typing a product name")
+                .font(.subheadline.weight(.semibold))
+            Text("Try \"coors\", \"cabernet\", \"tito\". You can also enter anything by hand if it isn't listed.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct CatalogRow: View {
+    let product: CatalogProduct
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(product.name)
+                    .font(.subheadline.weight(.medium))
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 6) {
+                    if let abv = product.abv {
+                        MetaChip(text: ValueFormat.abv(abv))
+                    }
+                    MetaChip(text: suggestedPackage)
+                }
+            }
+            Spacer(minLength: 4)
+            Image(systemName: "chevron.right")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+    }
+
+    /// Show the package the form will open with, so the pick is predictable before tapping.
+    private var suggestedPackage: String {
+        let suggestion = PackageDefaults.suggest(
+            name: product.name,
+            category: product.category,
+            containerMilliliters: product.containerMilliliters,
+            unitsPerPackage: product.unitsPerPackage
+        )
+        return ValueFormat.package(count: suggestion.count,
+                                   unitOunces: suggestion.container.volume.fluidOunces)
+    }
+}
+
+// MARK: - The form, opened prefilled
+
+/// What the form produces.
+struct ProductDraft {
+    var name: String
+    var unitFluidOunces: Double
+    var count: Int
+    var abv: Double
+    var abvIsEstimated: Bool
+    var abvNote: String
+    var priceDollars: Double?
+}
+
+private struct ProductForm: View {
+    let prefill: ProductPrefill
+    let onAdd: (ProductDraft) -> Void
+
+    @State private var name: String
+    @State private var sizeChoice: SizeChoice
+    @State private var customOunces = ""
+    @State private var count: Int
+    @State private var abvText: String
+    @State private var priceText = ""
+
+    /// The strength as the catalog offered it. While the field still holds this exact text the
+    /// value is an estimate; overtype it and it becomes a reading off the label (§11).
+    private let seededABVText: String
+    private let sizeOptions: [ContainerSize]
+
+    init(prefill: ProductPrefill, onAdd: @escaping (ProductDraft) -> Void) {
+        self.prefill = prefill
+        self.onAdd = onAdd
+
+        let seeded = prefill.abvIsEstimated ? ProductForm.trimZeros(prefill.abv) : ""
+        self.seededABVText = seeded
+
+        _name = State(initialValue: prefill.name)
+        _count = State(initialValue: prefill.count)
+        _abvText = State(initialValue: prefill.abv > 0 ? ProductForm.trimZeros(prefill.abv) : "")
+        _sizeChoice = State(initialValue: .preset(prefill.container))
+
+        // A catalog size can be one no picker carries (a 14.9 oz can), so make sure the prefilled
+        // container is always among the options rather than silently snapping to something else.
+        if ContainerSize.presets.contains(prefill.container) {
+            self.sizeOptions = ContainerSize.presets
+        } else {
+            self.sizeOptions = [prefill.container] + ContainerSize.presets
+        }
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Name", text: $name)
+            }
+
+            Section {
+                Picker("Container", selection: $sizeChoice) {
+                    ForEach(sizeOptions) { option in
+                        Text(option.label).tag(SizeChoice.preset(option))
+                    }
+                    Text("Other").tag(SizeChoice.custom)
+                }
+
+                if sizeChoice == .custom {
+                    HStack {
+                        Text("Size")
+                        Spacer()
+                        TextField("fl oz", text: $customOunces)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(maxWidth: 90)
+                        Text("oz").foregroundStyle(.secondary)
+                    }
+                }
+
+                Stepper(value: $count, in: 1...48) {
+                    HStack {
+                        Text("How many")
+                        Spacer()
+                        Text("\(count)")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                Text("Package")
+            } footer: {
+                if let ounces = unitOunces {
+                    Text("Total: \(ValueFormat.ounces(ounces * Double(count)))")
+                }
+            }
+
+            Section {
+                HStack {
+                    Text("ABV")
+                    Spacer()
+                    TextField("e.g. 5", text: $abvText)
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                        .frame(maxWidth: 90)
+                    Text("%").foregroundStyle(.secondary)
+                }
+                HStack {
+                    Text("Price")
+                    Spacer()
+                    TextField("whole package", text: $priceText)
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                        .frame(maxWidth: 130)
+                }
+            } header: {
+                Text("Strength and price")
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    if abvIsEstimated, !prefill.abvNote.isEmpty {
+                        Label(prefill.abvNote, systemImage: "info.circle")
+                    }
+                    Text("Leave the price blank if you haven't seen the tag yet. It waits in its own list rather than being guessed at.")
+                }
+            }
+        }
+        .navigationTitle("Add a product")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Add") { add() }
+                    .disabled(!isValid)
+            }
+        }
+    }
+
+    // MARK: Validation and submit
 
     private var unitOunces: Double? {
         switch sizeChoice {
-        case .preset(let preset):
-            return preset.volume.fluidOunces
+        case .preset(let option):
+            return option.volume.fluidOunces
         case .custom:
             guard let value = Double(customOunces), value > 0 else { return nil }
             return value
@@ -469,14 +614,11 @@ private struct AddProductSheet: View {
         return value
     }
 
-    private var price: Double? {
-        let cleaned = priceText.replacingOccurrences(of: "$", with: "")
-                               .trimmingCharacters(in: .whitespaces)
-        guard !cleaned.isEmpty, let value = Double(cleaned), value > 0 else { return nil }
-        return value
+    private var abvIsEstimated: Bool {
+        !seededABVText.isEmpty && abvText == seededABVText
     }
 
-    /// A price is optional (it can wait); a name, a size, and an ABV are not.
+    /// A price is optional because it can wait. A name, a size, and a strength are not.
     private var isValid: Bool {
         !name.trimmingCharacters(in: .whitespaces).isEmpty && unitOunces != nil && abv != nil
     }
@@ -490,79 +632,25 @@ private struct AddProductSheet: View {
                 count: count,
                 abv: abvValue,
                 abvIsEstimated: abvIsEstimated,
-                brandLabel: abvIsEstimated ? brandLabel : nil,
-                priceDollars: price
+                abvNote: prefill.abvNote,
+                priceDollars: PriceText.parse(priceText)
             )
         )
-        dismiss()
     }
 
-    /// Sensible starting package for a picked brand — still fully editable.
-    private static func defaultContainer(for category: BeverageCategory) -> ContainerSize {
-        switch category {
-        case .wineGlass, .sangria:      return ContainerSize.ml750
-        case .cocktail, .frozenCocktail, .martini, .shot: return ContainerSize.ml750
-        default:                        return ContainerSize.can12
-        }
-    }
-
-    private static func defaultCount(for category: BeverageCategory) -> Int {
-        switch category {
-        case .wineGlass, .sangria, .cocktail, .frozenCocktail, .martini, .shot: return 1
-        default: return 6
-        }
+    /// "4.2" rather than "4.200000", and "40" rather than "40.0".
+    static func trimZeros(_ value: Double) -> String {
+        let rounded = value.rounded()
+        return abs(value - rounded) < 0.001
+            ? String(format: "%.0f", rounded)
+            : String(format: "%.1f", value)
     }
 }
 
-/// A `Picker` needs a `Hashable` selection, and `ContainerSize` alone can't express "Other…".
+/// A `Picker` needs a `Hashable` selection, and `ContainerSize` alone can't express "Other".
 private enum SizeChoice: Hashable {
     case preset(ContainerSize)
     case custom
-}
-
-// MARK: - Brand picker
-
-private struct BrandPickerSheet: View {
-    let brands: [KnownBeverage]
-    let onPick: (KnownBeverage) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var query = ""
-
-    private var matches: [KnownBeverage] {
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return brands }
-        return brands.filter { $0.label.localizedCaseInsensitiveContains(trimmed) }
-    }
-
-    var body: some View {
-        NavigationStack {
-            List(matches) { brand in
-                Button {
-                    onPick(brand)
-                    dismiss()
-                } label: {
-                    HStack {
-                        Text(brand.label)
-                        Spacer()
-                        Text(ValueFormat.abv(brand.abv))
-                            .font(.caption)
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .buttonStyle(.plain)
-            }
-            .searchable(text: $query, prompt: "Search \(brands.count) products")
-            .navigationTitle("Known brands")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-        }
-    }
 }
 
 // MARK: - Edit sheet
@@ -659,16 +747,16 @@ private struct EditProductSheet: View {
     private func load() {
         guard !didLoad else { return }
         didLoad = true
-        abvText = String(format: "%g", product.abv.value)
-        ouncesText = String(format: "%g", product.unitVolume.fluidOunces)
+        abvText = ProductForm.trimZeros(product.abv.value)
+        ouncesText = ProductForm.trimZeros(product.unitVolume.fluidOunces)
         count = product.count
         if let price = product.price {
             priceText = String(format: "%.2f", price.dollars)
         }
     }
 
-    /// Each axis saves independently, so a blank or nonsense field simply doesn't change anything —
-    /// and a non-positive price is refused by `Price` in Core regardless (§10).
+    /// Each axis saves independently, so a blank or nonsense field simply changes nothing. A
+    /// non-positive price is refused by `Price` in Core regardless (§10).
     private func save() {
         if let ounces = Double(ouncesText), ounces > 0 {
             onSavePackage(ounces, count)
@@ -678,12 +766,22 @@ private struct EditProductSheet: View {
         if let abv = Double(abvText), abv >= 0, abv <= 100, abv != product.abv.value {
             onSaveABV(abv)
         }
-        let cleanedPrice = priceText.replacingOccurrences(of: "$", with: "")
-                                    .trimmingCharacters(in: .whitespaces)
-        if let price = Double(cleanedPrice), price > 0 {
+        if let price = PriceText.parse(priceText) {
             onSavePrice(price)
         }
         dismiss()
+    }
+}
+
+/// One place that turns typed money into a number, so "$14.99" and " 14.99 " behave the same
+/// everywhere and a non-positive amount is rejected before it reaches Core.
+enum PriceText {
+    static func parse(_ text: String) -> Double? {
+        let cleaned = text.replacingOccurrences(of: "$", with: "")
+                          .replacingOccurrences(of: ",", with: "")
+                          .trimmingCharacters(in: .whitespaces)
+        guard !cleaned.isEmpty, let value = Double(cleaned), value > 0 else { return nil }
+        return value
     }
 }
 

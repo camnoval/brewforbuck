@@ -11,38 +11,119 @@ import CoreModel
 import CoreContracts
 import CoreServices
 
-/// The thin shell over the pure `StoreSession` (§7, §4) — the store-calculator twin of
-/// `ResultsViewModel`. It holds one session, republishes it to SwiftUI, and forwards edits straight
-/// to Core. No business logic here: the ranking, the standard-drinks math, and both invariants live
-/// in `StoreSession` / `StoreComparison` / `ValueRanker`.
+/// What the add form opens with once the shopper picks a product. Everything here is a starting
+/// point they can overtype. The one field with no default is the price, which is the single value
+/// the app never supplies (§10).
+struct ProductPrefill: Identifiable, Hashable {
+    let id: String
+    var name: String
+    var abv: Double
+    /// True while `abv` is still a catalog or style-chart figure rather than a number read off the
+    /// package. Drives the honesty badge and the estimate note (§11).
+    var abvIsEstimated: Bool
+    var abvNote: String
+    var container: ContainerSize
+    var count: Int
+}
+
+/// The thin shell over the pure `StoreSession` (§7, §4), plus the product search the add flow now
+/// opens with. No business logic lives here: value ranking is in `StoreSession`/`StoreComparison`,
+/// search ranking in `InMemoryStoreCatalog`, package inference in `PackageDefaults`, and the ABV
+/// fallback in `BeverageKnowledge`. This type forwards and nothing else.
 @MainActor
 final class CompareViewModel: ObservableObject {
     @Published private(set) var session = StoreSession()
+
+    private let catalog: any StoreCatalog
+    private let knowledge: any BeverageKnowledge
+
+    /// Injected behind the contracts (§6). Swapping the curated brand list for a bundled PLCB plus
+    /// Open Food Facts catalog, or adding a barcode lookup, happens here and nowhere else.
+    init(
+        catalog: any StoreCatalog = InMemoryStoreCatalog.curatedBrands,
+        knowledge: any BeverageKnowledge = StaticBeverageKnowledge()
+    ) {
+        self.catalog = catalog
+        self.knowledge = knowledge
+    }
 
     // Derived views for the UI.
     var ranked: [RankedEditableProduct] { session.rankedProducts }
     var needsPrice: [EditableProduct] { session.needsPriceProducts }
     var isEmpty: Bool { session.products.isEmpty }
+    var searchableProductCount: Int { catalog.productCount }
 
-    /// Brands the shopper can pick to pre-fill a typical ABV. This is the public projection of the
-    /// generated brand table (655 products), so the picker doesn't reach into lookup internals.
-    let brands: [KnownBeverage] = BrandCatalog.all
+    // MARK: - Search
+
+    func search(_ query: String) -> [CatalogProduct] {
+        catalog.search(query, limit: 40)
+    }
+
+    /// Turn a picked catalog product into a filled-in form. Three things get resolved, all by Core:
+    /// the ABV (the catalog's if it stated one, else the style chart's), the container, and the
+    /// pack count.
+    func prefill(for product: CatalogProduct) -> ProductPrefill {
+        let package = PackageDefaults.suggest(
+            name: product.name,
+            category: product.category,
+            containerMilliliters: product.containerMilliliters,
+            unitsPerPackage: product.unitsPerPackage
+        )
+
+        if let abv = product.abv {
+            return ProductPrefill(
+                id: product.id,
+                name: product.name,
+                abv: abv,
+                abvIsEstimated: true,
+                abvNote: "\(product.name) at its typical label strength, not read off this package",
+                container: package.container,
+                count: package.count
+            )
+        }
+
+        // The catalog stated no strength, so fall back to the same style chart the menu scanner
+        // uses. Still an estimate, and the note says which tier it came from.
+        let profile = knowledge.profile(for: product.name, sectionCategory: product.category)
+        return ProductPrefill(
+            id: product.id,
+            name: product.name,
+            abv: profile.typicalABV,
+            abvIsEstimated: true,
+            abvNote: profile.abvNote,
+            container: package.container,
+            count: package.count
+        )
+    }
+
+    /// A product the catalog doesn't carry. Nothing is estimated because nothing was looked up: the
+    /// shopper supplies every axis, so the ABV is `.read` as soon as they type it.
+    func blankPrefill(named name: String) -> ProductPrefill {
+        ProductPrefill(
+            id: "manual",
+            name: name,
+            abv: 0,
+            abvIsEstimated: false,
+            abvNote: "",
+            container: .can12,
+            count: 1
+        )
+    }
 
     // MARK: - Edits (pass-through to the pure session)
 
-    /// `abvIsEstimated` is the honesty flag (§11): true when the ABV came from the brand catalog's
-    /// label-typical figure, false when the shopper read it off the can.
     func addProduct(
         name: String,
         unitFluidOunces: Double,
         count: Int,
         abv: Double,
         abvIsEstimated: Bool,
-        brandLabel: String? = nil,
+        abvNote: String,
         priceDollars: Double?
     ) {
+        let fallbackNote = "typical strength, not read off this package"
         let provenance: Provenance<Double> = abvIsEstimated
-            ? .estimated(abv, note: Self.estimateNote(brandLabel: brandLabel))
+            ? .estimated(abv, note: abvNote.isEmpty ? fallbackNote : abvNote)
             : .read(abv)
 
         session.addProduct(
@@ -63,12 +144,4 @@ final class CompareViewModel: ObservableObject {
 
     func removeProduct(id: Int) { session.removeProduct(id: id) }
     func removeAll() { session.removeAll() }
-
-    /// The assumption the badge reveals — same phrasing style as the menu side's estimate notes.
-    private static func estimateNote(brandLabel: String?) -> String {
-        if let brandLabel {
-            return "\(brandLabel) — typical label ABV, not read off this package"
-        }
-        return "typical ABV for this kind of drink, not read off this package"
-    }
 }

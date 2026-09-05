@@ -5,7 +5,75 @@ here — keep this lean. Newest note on top; each new note says plainly what it 
 
 ---
 
-## ⇢ STATUS (2026-09-05) — Store calculator (Goal 2) is built; **RevenueCat is now the critical path**
+## ⇢ STATUS (2026-09-05, part 2) — Search-first store calculator; the catalog import path
+
+*Supersedes the part-1 note below re: the add flow, which was brand-picker-behind-a-button and is
+now search-first. Everything else in part 1 still stands. `swift test` was green at 146/146 after the
+part-1 fix; these additions are again uncompiled.*
+
+**Search first (owner's call).** `AddProductFlow` opens on a focused search field over the whole
+catalog; results rank live, and picking one pushes a form already filled in except the price. New in
+Core so the logic is tested rather than living in a view:
+- `CoreContracts/StoreCatalog.swift` (new): `CatalogProduct` (name, category, optional ABV, optional
+  size, optional pack count, optional **UPC**) + the `StoreCatalog` protocol. Fifth contract (§6).
+  The UPC field is unused today and exists so the barcode step is a data question, not a redesign.
+- `CoreServices/InMemoryStoreCatalog.swift` (new): ranked search in five tiers (exact, name-prefix,
+  word-prefix, substring, all-words-any-order), length tiebreak, precomputed lowercased names, and
+  digits-only UPC lookup that reconciles a 12-digit UPC-A with the 14-digit GTIN form. Ranking, not
+  filtering, because with a large catalog a substring filter buries the obvious answer.
+- `CoreServices/PackageDefaults.swift` (new): the "if it knows it's wine, make it 750 mL" logic, in
+  three tiers (catalog-stated → read off the name → category default). Wine and spirits open at
+  750 mL × 1, beer at 12 oz × 6, seltzer at 12 oz × 12; names carrying "1.75 L", "16oz 12pk",
+  "handle", "magnum", "tallboy", "30 rack", "14.9oz" are read exactly. Size matching is on
+  unit-normalized **tokens**, not substrings, which is what stops "Josh Cellars **200**7 Cabernet"
+  becoming a 200 mL bottle and "Hand**le**y Cellars" becoming a handle. Both are regression tests.
+- `ContainerSize` gained `ml50`/`ml200`, `closest(toMilliliters:)` and `closest(toFluidOunces:)`, so
+  an unlisted real size (14.9 oz Guinness, 11.2 oz Peroni, 5 L box) keeps its own label instead of
+  snapping to the nearest preset. Snap tolerance is 1% by volume.
+- Tests: `PackageDefaultsTests` (23 cases incl. the negative ones above), `StoreCatalogSearchTests`
+  (16 cases incl. tier ordering and barcode normalization).
+
+**Em-dashes removed from every user-facing string** in `ResultsView`, `ValueChips`, `CompareView`,
+and `BeverageKnowledge.abvNote` (that one renders in the app, so it counted). The em-dash characters
+still in `MenuParser` are menu text it matches *on* and must stay.
+
+**The big catalog: sourced, with an import path, not yet imported.** Two public sources cover the
+shelf between them, and neither can be fetched from this environment (no network), so the work here
+is the pipeline plus honest reporting rather than a bundled dataset:
+- **PLCB wholesale catalogs** (`pa.gov/agencies/lcb/.../item-catalogs`): full .xlsx catalogs for
+  wine, spirits, and ready-to-drink cocktails, every SKU sold in PA, with a retail size and a
+  **UPC** (their own instructions confirm the UPC column, with leading zeros stripped). No beer,
+  because PA doesn't sell beer through these stores.
+- **Open Food Facts**: nightly JSONL/Parquet dump, barcode-keyed, alcohol percentage on most beers
+  and wines. Covers the beer gap. **ODbL licensed**, so attribution plus share-alike obligations on
+  the database; `--plcb`-only is the clean-license build. Not legal advice.
+- `Tooling/inspect_store_catalog.py` (new, §5): prints the real headers, fill rates, and sample rows
+  before anything is parsed. **Run this first** and correct `COLUMN_CANDIDATES` if the fuzzy header
+  matching guessed wrong; the PLCB has renamed columns before and I could not see the live file.
+- `Tooling/build_store_catalog.py` (new): both sources → `AppTarget/Resources/store_catalog.json`,
+  with ABV derived from proof when only proof is given, size parsed from the retail-size text,
+  UPC zero-padded, dedupe by barcode preferring the richer record, and `--dry-run` to check the
+  mapping without writing. Helpers unit-checked in Python here; the download paths were not run.
+- **Price is deliberately not imported.** Shelf prices are local and weekly, and a stale bundled
+  price would be the one dishonest number in the app (§10). Name, ABV, size, and UPC only.
+- `AppTarget/Infrastructure/BundledStoreCatalog.swift` (new) loads that JSON if it's in the bundle
+  and **falls back to the curated 655-brand list** otherwise, so the app works today and improves
+  the moment the file is added to the target. A malformed file degrades to the fallback rather than
+  crashing someone mid-aisle.
+
+**Why the store catalog is bundled JSON and not codegen'd Swift:** `GeneratedBrandTable` is the
+*menu* matcher, where a small curated list is a feature (a 30,000-SKU list would match menu text
+like "Chardonnay" against one specific winery's bottling). Different job, different data, separate
+artifact. Also, 30,000 `BrandEntry` literals would be wretched to compile.
+
+**Next, unchanged in priority:** RevenueCat is still the critical path and still untouched. After
+that: run the import, check `store_catalog.json` size on device (if it's large, consider a
+prefix-indexed format or SQLite before shipping it), then the barcode scanner via
+`StoreCatalog.product(withUPC:)`, which is already the seam it needs.
+
+---
+
+## STATUS (2026-09-05) — Store calculator (Goal 2) is built; **RevenueCat is now the critical path**
 
 *Supersedes the 09-02 status note below re: next steps. The parser situation is unchanged — that note
 is still accurate about OCR; ignore only its numbered next-step list, which items 3 and 4 have now

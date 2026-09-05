@@ -57,7 +57,7 @@ enum ValueFormat {
 
     /// "$1.67 per standard drink", or an honest dash when there's no alcohol to price.
     static func perStandardDrink(_ dollars: Double) -> String {
-        guard dollars.isFinite else { return "no alcohol — no value per drink" }
+        guard dollars.isFinite else { return "no alcohol, so no value per drink" }
         return "\(money(dollars)) per standard drink"
     }
 }

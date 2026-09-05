@@ -38,9 +38,9 @@ public struct BeverageProfile: Equatable, Sendable {
         case .styleChart(let matched):
             return "matched \(matched) (style chart, ~\(typicalABV)% ABV)"
         case .categoryFallback:
-            return "no style match — used typical \(category) (~\(typicalABV)% ABV)"
+            return "no style match, used typical \(category) (~\(typicalABV)% ABV)"
         case .unclassifiedFallback:
-            return "unclassified — used a generic estimate (~\(typicalABV)% ABV)"
+            return "unclassified, used a generic estimate (~\(typicalABV)% ABV)"
         }
     }
 }

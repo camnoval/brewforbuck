@@ -111,7 +111,7 @@ struct ResultsView: View {
         } header: {
             SectionHeader(title: "Not sure about these", systemImage: "questionmark.circle.fill")
         } footer: {
-            Text("We couldn't read a price for these — they may be drinks we misread, or not drinks at all. Add a price to rank one, or remove it.")
+            Text("We couldn't read a price for these. They may be drinks we misread, or not drinks at all. Add a price to rank one, or remove it.")
         }
     }
 
@@ -311,7 +311,7 @@ private struct UnsureRow: View {
 private struct CalcExplainer: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("A **standard drink** is 0.6 fl oz of pure alcohol — the amount in a 12 oz beer at 5% ABV.")
+            Text("A **standard drink** is 0.6 fl oz of pure alcohol, the amount in a 12 oz beer at 5% ABV.")
             Group {
                 Text("Alcohol in a serving  =  size × ABV")
                 Text("Standard drinks  =  alcohol ÷ 0.6")
@@ -319,7 +319,7 @@ private struct CalcExplainer: View {
                 Text("Price per standard drink  =  menu price ÷ standard drinks")
             }
             Divider()
-            Text("So a 12 oz, 4.5% drink is 0.9 standard drinks. At an $8.50 menu price that's $9.44 per standard drink — higher than the sticker, because one glass is less than a full standard drink.")
+            Text("So a 12 oz, 4.5% drink is 0.9 standard drinks. At an $8.50 menu price that's $9.44 per standard drink, higher than the sticker, because one glass is less than a full standard drink.")
                 .foregroundStyle(.secondary)
         }
         .font(.caption)

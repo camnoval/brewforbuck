@@ -3,6 +3,22 @@
 *Append-only history (§2). Newest on top. The Handoff is the live "where we are"; this is
 the log — don't let them merge.*
 
+## 2026-09-05 · Search-first store calculator, package inference, catalog import path
+- **Search first:** the add flow opens on a focused search field over the catalog; picking a result
+  pushes a prefilled form. `StoreCatalog` contract + `CatalogProduct` (CoreContracts) and
+  `InMemoryStoreCatalog` (CoreServices) with five-tier ranked search and digits-only UPC lookup.
+- **`PackageDefaults`:** infers container and pack count from catalog data, then the product name,
+  then the category. Wine and spirits open at 750 mL, beer at a 12 oz six pack, seltzer at twelve.
+  Size matching uses unit-normalized tokens so a vintage year is not a bottle size and "Handley
+  Cellars" is not a handle. `ContainerSize` gained 50/200 mL presets and nearest-preset lookups in
+  both mL and fl oz, so a 14.9 oz can keeps its own label.
+- **Em-dashes removed** from all user-facing copy, including `BeverageKnowledge.abvNote`.
+- **Catalog import path:** `Tooling/inspect_store_catalog.py` (dump the real schema first) and
+  `Tooling/build_store_catalog.py` (PLCB wholesale catalogs + Open Food Facts →
+  `store_catalog.json`; no prices by design). `BundledStoreCatalog` loads it if present and falls
+  back to the curated 655-brand list otherwise.
+- Tests: `PackageDefaultsTests`, `StoreCatalogSearchTests`. Not yet compiled.
+
 ## 2026-09-05 · Store calculator (Goal 2) + brand table regenerated
 - **`StoreSession` (new, pure CoreServices):** the interactive store calculator — `EditableProduct`
   (unit volume × count, `Provenance<Double>` ABV, optional `Price`) and a session with
