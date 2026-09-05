@@ -27,7 +27,8 @@ struct CaptureHomeView: View {
     @State private var showCamera = false
     @State private var isProcessing = false
     @State private var showResults = false
-    /// The store calculator — a second way in that needs no photo at all (typed prices only).
+    /// Two more ways in that need no photo: type a few menu drinks, or compare packages in a store.
+    @State private var showQuick = false
     @State private var showCompare = false
     @State private var errorMessage: String?
 
@@ -77,6 +78,16 @@ struct CaptureHomeView: View {
                     .disabled(isProcessing)
 
                     Button {
+                        showQuick = true
+                    } label: {
+                        Label("Quick comparison", systemImage: "list.bullet.rectangle.portrait")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .disabled(isProcessing)
+
+                    Button {
                         showCompare = true
                     } label: {
                         Label("Compare store prices", systemImage: "cart")
@@ -108,6 +119,9 @@ struct CaptureHomeView: View {
             .navigationTitle("Bang-for-Buck")
             .navigationDestination(isPresented: $showResults) {
                 ResultsView(viewModel: viewModel).navigationTitle("Results")
+            }
+            .navigationDestination(isPresented: $showQuick) {
+                QuickCompareView()
             }
             .navigationDestination(isPresented: $showCompare) {
                 CompareView()

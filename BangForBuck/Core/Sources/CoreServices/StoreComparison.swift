@@ -155,6 +155,21 @@ public struct ContainerSize: Equatable, Hashable, Sendable, Identifiable {
         ml50, ml187, ml200, ml375, ml500, ml750, liter1, liter15, liter175,
     ]
 
+    /// Single servings as a bar pours them, for the quick menu comparison. Same type, different
+    /// list: a shopper picks a package off a shelf, a drinker picks a pour off a menu, and offering
+    /// a 1.75 L handle as a serving size (or a 5 oz wine pour as a package) is just noise.
+    public static let pour15 = ContainerSize(label: "1.5 oz shot", volume: Volume(fluidOunces: 1.5))
+    public static let pour3 = ContainerSize(label: "3 oz double", volume: Volume(fluidOunces: 3))
+    public static let pour5 = ContainerSize(label: "5 oz wine pour", volume: Volume(fluidOunces: 5))
+    public static let pour8 = ContainerSize(label: "8 oz", volume: Volume(fluidOunces: 8))
+    public static let pour20 = ContainerSize(label: "20 oz", volume: Volume(fluidOunces: 20))
+    public static let pour22 = ContainerSize(label: "22 oz", volume: Volume(fluidOunces: 22))
+    public static let pitcher60 = ContainerSize(label: "60 oz pitcher", volume: Volume(fluidOunces: 60))
+
+    public static let pourPresets: [ContainerSize] = [
+        pour15, pour3, pour5, pour8, can12, can16, pour20, pour22, can24, pitcher60,
+    ]
+
     /// The preset nearest a catalog-stated size, or a one-off `ContainerSize` when nothing is close.
     /// Store catalogs state sizes in millilitres, including ones no picker should carry (a 5 L box,
     /// a 720 mL sake, a 700 mL import), so an exact-preset-only lookup would silently mis-size
@@ -182,14 +197,16 @@ public struct ContainerSize: Equatable, Hashable, Sendable, Identifiable {
         return ContainerSize(label: "\(wholeMilliliters) mL", volume: Volume(milliliters: milliliters))
     }
 
-    /// Same idea in fluid ounces, so an unusual beer size keeps an ounce label a shopper recognizes
-    /// ("14.9 oz" for a Guinness can) instead of being rendered as millilitres.
-    public static func closest(toFluidOunces ounces: Double) -> ContainerSize {
+    /// Same idea in fluid ounces, so an unusual size keeps an ounce label a drinker recognizes
+    /// ("14.9 oz" for a Guinness can) instead of being rendered as millilitres. `among` lets the
+    /// quick menu comparison snap to pour sizes rather than package sizes.
+    public static func closest(toFluidOunces ounces: Double,
+                               among options: [ContainerSize] = presets) -> ContainerSize {
         guard ounces > 0 else { return can12 }
 
         var best: ContainerSize?
         var bestGap = Double.infinity
-        for preset in presets {
+        for preset in options {
             let gap = abs(preset.volume.fluidOunces - ounces)
             if gap < bestGap { bestGap = gap; best = preset }
         }

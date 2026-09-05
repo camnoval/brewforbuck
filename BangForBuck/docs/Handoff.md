@@ -5,7 +5,59 @@ here — keep this lean. Newest note on top; each new note says plainly what it 
 
 ---
 
-## ⇢ STATUS (2026-09-05, part 2) — Search-first store calculator; the catalog import path
+## ⇢ STATUS (2026-09-05, part 3) — Quick comparison (third feature); shared row + edit sheet
+
+*Supersedes nothing; adds a feature and de-duplicates the two comparison screens. Still uncompiled.*
+
+**Quick comparison (`AppTarget/Features/Quick/`).** Holding a menu, weighing two or three things:
+type each drink, take the price off the menu, see which is the better value. No photo, no shelf.
+- Defaults to a **single serving**, which is the whole difference from the store calculator: a wine
+  opens at a 5 oz pour rather than a 750 mL bottle, a whiskey at 1.5 oz rather than a handle. "How
+  many you'd order" is there for a round without pretending that's the common case.
+- **Autofill from the same catalog.** Typing shows up to six live suggestions; picking one fills in
+  the label ABV and the pour. Typing something the catalog has never heard of *also* fills in, via
+  the style chart, because most cocktails on a real menu are in no product database and the chart
+  still has an opinion about a margarita. Either way the strength is flagged `.estimated` with a
+  note, and overtyping it promotes it to `.read` (§11).
+- **Sizes change with one tap:** `SizeChipPicker` is a scrolling strip of pour presets (1.5 oz shot,
+  3 oz double, 5 oz wine pour, 12, 16, 20, 22, 24, 60 oz pitcher) writing into the same ounces field
+  the text box edits, so the two controls can't disagree. Also on the edit sheet.
+- **Soft cap of 5**, per the ask. Past that the add button disables and the footer points at the
+  store calculator, which has no cap.
+
+**It runs on the same pure `StoreSession` as the store calculator.** A priced volume of alcohol is a
+priced volume of alcohol: `unitVolume × count × abv ÷ price` is identical whether the volume is a
+12 oz can in a six pack or a 5 oz pour of wine. Sharing the session means the two screens can never
+rank the same numbers differently, and the price invariant lives in exactly one place (§10). What
+differs is defaults and wording, which is `QuickCompareViewModel` and the view.
+
+**New in Core:**
+- `CoreServices/PourDefaults.swift`: the single-serving twin of `PackageDefaults`. Reads a pour off
+  the menu wording ("16 oz", "pitcher", "double", "shot", "pint", and `pitchor`, Vision's misread of
+  pitcher, so a scanned line and a typed line agree), else takes `BeverageKnowledge.typicalSize` so
+  it can't disagree with the menu scanner about what a wine pour is, else 12 oz. "Glass" and "bottle"
+  are only trusted where the category settles the volume: a wine bottle is 25.4 oz, a beer bottle is
+  12, and a "glass" of beer is ignored entirely.
+- `ContainerSize.pourPresets` + `closest(toFluidOunces:among:)`, so serving sizes snap to serving
+  labels and nobody is offered a 1.75 L handle as a single drink.
+- `PourDefaultsTests` (14 cases).
+
+**Shared UI, extracted rather than copied** (`AppTarget/Features/Shared/RankedValueRow.swift`):
+`RankedValueRow` (rank, name, chips, provenance badge, detail line, value, price pill),
+`ProductEditSheet` (size chips + exact size + count + ABV + price + remove, with caller-supplied
+labels because "how many" means cans-in-the-pack in a store and rounds-at-the-bar on a menu), and
+`SizeChipPicker`. `PriceText` and `ValueFormat.editable` moved into `Shared/ValueChips.swift`.
+`CompareView` was refactored onto all of it and lost its private duplicates, so it is now ~160 lines
+lighter and the two screens share one look by construction.
+
+**Home screen** now offers four ways in: take a photo, choose from library, **Quick comparison**,
+Compare store prices.
+
+**Next, still unchanged:** RevenueCat is the critical path and remains untouched.
+
+---
+
+## STATUS (2026-09-05, part 2) — Search-first store calculator; the catalog import path
 
 *Supersedes the part-1 note below re: the add flow, which was brand-picker-behind-a-button and is
 now search-first. Everything else in part 1 still stands. `swift test` was green at 146/146 after the

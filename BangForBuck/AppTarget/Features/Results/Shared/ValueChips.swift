@@ -55,10 +55,31 @@ enum ValueFormat {
         String(format: "≈ %.1f standard drink%@", count, abs(count - 1) < 0.05 ? "" : "s")
     }
 
-    /// "$1.67 per standard drink", or an honest dash when there's no alcohol to price.
+    /// "$1.67 per standard drink", or an honest note when there's no alcohol to price.
     static func perStandardDrink(_ dollars: Double) -> String {
         guard dollars.isFinite else { return "no alcohol, so no value per drink" }
         return "\(money(dollars)) per standard drink"
+    }
+
+    /// A number as it should appear in an editable text field: "4.2" not "4.200000", "40" not
+    /// "40.0". Used to seed the ABV and size fields so the shopper isn't deleting stray zeros.
+    static func editable(_ value: Double) -> String {
+        let rounded = value.rounded()
+        return abs(value - rounded) < 0.001
+            ? String(format: "%.0f", rounded)
+            : String(format: "%.1f", value)
+    }
+}
+
+/// One place that turns typed money into a number, so "$14.99" and " 14.99 " behave the same
+/// everywhere and a non-positive amount is rejected before it ever reaches Core (§10).
+enum PriceText {
+    static func parse(_ text: String) -> Double? {
+        let cleaned = text.replacingOccurrences(of: "$", with: "")
+                          .replacingOccurrences(of: ",", with: "")
+                          .trimmingCharacters(in: .whitespaces)
+        guard !cleaned.isEmpty, let value = Double(cleaned), value > 0 else { return nil }
+        return value
     }
 }
 

@@ -64,8 +64,11 @@ struct CompareView: View {
             AddProductFlow(viewModel: viewModel)
         }
         .sheet(item: $editing) { product in
-            EditProductSheet(
+            ProductEditSheet(
                 product: product,
+                sizeOptions: ContainerSize.presets,
+                countLabel: "How many in the pack",
+                priceLabel: "Pack price",
                 onSaveABV: { viewModel.correctABV(id: product.id, to: $0) },
                 onSavePrice: { viewModel.setPrice(id: product.id, dollars: $0) },
                 onSavePackage: { viewModel.setPackage(id: product.id, unitFluidOunces: $0, count: $1) },
@@ -147,51 +150,16 @@ struct CompareView: View {
 private struct ProductRow: View {
     let item: RankedEditableProduct
 
-    private var product: EditableProduct { item.product }
-
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            RankMedal(rank: item.rank)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text(product.name)
-                    .font(.headline)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: 6) {
-                    MetaChip(text: ValueFormat.package(count: product.count,
-                                                       unitOunces: product.unitVolume.fluidOunces))
-                    MetaChip(text: ValueFormat.abv(product.abv.value))
-                    ProvenanceChip(isEstimated: product.hasEstimate,
-                                   estimatedLabel: "typical ABV",
-                                   readLabel: "from label")
-                }
-
-                Text("\(ValueFormat.standardDrinks(product.totalStandardDrinks)) in the package · \(ValueFormat.perStandardDrink(item.pricePerStandardDrink))")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-
-                if product.hasEstimate {
-                    Label("Tap to correct", systemImage: "pencil")
-                        .font(.caption2)
-                        .foregroundStyle(Color.accentColor)
-                }
-            }
-
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 4) {
-                Text(String(format: "%.2f/$", item.standardDrinksPerDollar))
-                    .font(.title3.weight(.bold))
-                    .monospacedDigit()
-                    .foregroundStyle(Color.accentColor)
-                if let price = product.price {
-                    PricePill(dollars: price.dollars, caption: "pack price")
-                }
-            }
-        }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
+        RankedValueRow(
+            ranked: item,
+            sizeChip: ValueFormat.package(count: item.product.count,
+                                          unitOunces: item.product.unitVolume.fluidOunces),
+            estimatedLabel: "typical ABV",
+            readLabel: "from label",
+            detailSuffix: " in the package",
+            priceCaption: "pack price"
+        )
     }
 }
 
@@ -498,12 +466,12 @@ private struct ProductForm: View {
         self.prefill = prefill
         self.onAdd = onAdd
 
-        let seeded = prefill.abvIsEstimated ? ProductForm.trimZeros(prefill.abv) : ""
+        let seeded = prefill.abvIsEstimated ? ValueFormat.editable(prefill.abv) : ""
         self.seededABVText = seeded
 
         _name = State(initialValue: prefill.name)
         _count = State(initialValue: prefill.count)
-        _abvText = State(initialValue: prefill.abv > 0 ? ProductForm.trimZeros(prefill.abv) : "")
+        _abvText = State(initialValue: prefill.abv > 0 ? ValueFormat.editable(prefill.abv) : "")
         _sizeChoice = State(initialValue: .preset(prefill.container))
 
         // A catalog size can be one no picker carries (a 14.9 oz can), so make sure the prefilled
@@ -638,151 +606,12 @@ private struct ProductForm: View {
         )
     }
 
-    /// "4.2" rather than "4.200000", and "40" rather than "40.0".
-    static func trimZeros(_ value: Double) -> String {
-        let rounded = value.rounded()
-        return abs(value - rounded) < 0.001
-            ? String(format: "%.0f", rounded)
-            : String(format: "%.1f", value)
-    }
 }
 
 /// A `Picker` needs a `Hashable` selection, and `ContainerSize` alone can't express "Other".
 private enum SizeChoice: Hashable {
     case preset(ContainerSize)
     case custom
-}
-
-// MARK: - Edit sheet
-
-private struct EditProductSheet: View {
-    let product: EditableProduct
-    let onSaveABV: (Double) -> Void
-    let onSavePrice: (Double) -> Void
-    let onSavePackage: (Double, Int) -> Void
-    let onRemove: () -> Void
-
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var abvText = ""
-    @State private var priceText = ""
-    @State private var ouncesText = ""
-    @State private var count = 1
-    @State private var didLoad = false
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Text(product.name).font(.headline)
-                    if let note = product.abv.note {
-                        Label(note, systemImage: "info.circle")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("Package") {
-                    HStack {
-                        Text("Unit size")
-                        Spacer()
-                        TextField("fl oz", text: $ouncesText)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(maxWidth: 90)
-                        Text("oz").foregroundStyle(.secondary)
-                    }
-                    Stepper(value: $count, in: 1...48) {
-                        HStack {
-                            Text("How many")
-                            Spacer()
-                            Text("\(count)").monospacedDigit().foregroundStyle(.secondary)
-                        }
-                    }
-                }
-
-                Section("Strength and price") {
-                    HStack {
-                        Text("ABV")
-                        Spacer()
-                        TextField("%", text: $abvText)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(maxWidth: 90)
-                        Text("%").foregroundStyle(.secondary)
-                    }
-                    HStack {
-                        Text("Price")
-                        Spacer()
-                        TextField("whole package", text: $priceText)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(maxWidth: 130)
-                    }
-                }
-
-                Section {
-                    Button(role: .destructive) {
-                        onRemove()
-                        dismiss()
-                    } label: {
-                        Label("Remove this product", systemImage: "trash")
-                    }
-                }
-            }
-            .navigationTitle("Edit product")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { save() }
-                }
-            }
-            .onAppear(perform: load)
-        }
-    }
-
-    private func load() {
-        guard !didLoad else { return }
-        didLoad = true
-        abvText = ProductForm.trimZeros(product.abv.value)
-        ouncesText = ProductForm.trimZeros(product.unitVolume.fluidOunces)
-        count = product.count
-        if let price = product.price {
-            priceText = String(format: "%.2f", price.dollars)
-        }
-    }
-
-    /// Each axis saves independently, so a blank or nonsense field simply changes nothing. A
-    /// non-positive price is refused by `Price` in Core regardless (§10).
-    private func save() {
-        if let ounces = Double(ouncesText), ounces > 0 {
-            onSavePackage(ounces, count)
-        } else if count != product.count {
-            onSavePackage(product.unitVolume.fluidOunces, count)
-        }
-        if let abv = Double(abvText), abv >= 0, abv <= 100, abv != product.abv.value {
-            onSaveABV(abv)
-        }
-        if let price = PriceText.parse(priceText) {
-            onSavePrice(price)
-        }
-        dismiss()
-    }
-}
-
-/// One place that turns typed money into a number, so "$14.99" and " 14.99 " behave the same
-/// everywhere and a non-positive amount is rejected before it reaches Core.
-enum PriceText {
-    static func parse(_ text: String) -> Double? {
-        let cleaned = text.replacingOccurrences(of: "$", with: "")
-                          .replacingOccurrences(of: ",", with: "")
-                          .trimmingCharacters(in: .whitespaces)
-        guard !cleaned.isEmpty, let value = Double(cleaned), value > 0 else { return nil }
-        return value
-    }
 }
 
 #Preview {

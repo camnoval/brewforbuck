@@ -3,6 +3,21 @@
 *Append-only history (§2). Newest on top. The Handoff is the live "where we are"; this is
 the log — don't let them merge.*
 
+## 2026-09-05 · Quick comparison (menu drinks) + shared comparison UI
+- **New feature, `Features/Quick/`:** type two to five drinks off a menu with their prices and see
+  them ranked by standard drinks per dollar. Defaults to a single serving (5 oz wine pour, 1.5 oz
+  shot, 12 oz beer) rather than a package, with autofill from the same catalog and from the style
+  chart for drinks no catalog carries. Size changes with one tap via a pour-preset chip strip. Soft
+  cap of five, with a pointer to the store calculator beyond that.
+- **Runs on the same pure `StoreSession`** as the store calculator, so identical numbers can never
+  rank differently and the price invariant lives in one place (§10).
+- **`PourDefaults` (CoreServices):** reads a pour off the menu wording, else borrows
+  `BeverageKnowledge.typicalSize`, else 12 oz. "Glass" and "bottle" only count where the category
+  settles the volume. `ContainerSize.pourPresets` and `closest(toFluidOunces:among:)` added.
+- **Shared UI extracted:** `RankedValueRow`, `ProductEditSheet`, `SizeChipPicker`, plus `PriceText`
+  and `ValueFormat.editable`. `CompareView` refactored onto them and lost its private duplicates.
+- Tests: `PourDefaultsTests`. Not yet compiled.
+
 ## 2026-09-05 · Search-first store calculator, package inference, catalog import path
 - **Search first:** the add flow opens on a focused search field over the catalog; picking a result
   pushes a prefilled form. `StoreCatalog` contract + `CatalogProduct` (CoreContracts) and
