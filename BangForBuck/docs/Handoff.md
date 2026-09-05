@@ -5,7 +5,188 @@ here — keep this lean. Newest note on top; each new note says plainly what it 
 
 ---
 
-## ⇢ STATUS (2026-09-05, part 3) — Quick comparison (third feature); shared row + edit sheet
+## ⇢ STATUS (2026-09-05, part 7) — Build cleanup from the first compile of parts 5 and 6
+
+Small fixes, all from real compiler output.
+
+**Errors:**
+- `(any BeverageKnowledge)? = nil` in `CompareViewModel` and `QuickCompareViewModel`. Written as
+  `any BeverageKnowledge?`, which parses as "any of `Optional<BeverageKnowledge>`" rather than an
+  optional existential; the parentheses are required.
+- **`BundledStoreCatalog.shared` is now `nonisolated`.** This target builds with
+  `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so the enum was main-actor-isolated, and a **default
+  argument is evaluated in a nonisolated context** — which is exactly how all three view models use
+  it. Safe to mark nonisolated: an immutable `let` of a `Sendable` value, read once. Worth
+  remembering as a pattern, since anything else this target exposes as a default argument will hit
+  the same wall.
+
+**Warnings:** the two `onChange(of:perform:)` sites (`CaptureHomeView`, `ContentView`) moved to the
+two-parameter closure, deprecated since iOS 17 against an 18.6 target.
+
+**`AccentColor` added** (`Assets.xcassets/AccentColor.colorset`). `ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME`
+pointed at a colour set that didn't exist, so every `Color.accentColor` in the app — the value
+figures, the "tap to correct" hints, the size chips, the buttons — was rendering as stock system
+blue. Now a bottle green, `#1D6F4C` light / `#45AD73` dark, chosen to read as glass and to stay
+clear of the gold/silver/bronze rank medals rather than competing with them. Change the two colour
+values if you want a different identity; nothing in code names a colour.
+
+---
+
+## STATUS (2026-09-05, part 6) — Menu scanner uses the big catalog too; metric sizes
+
+**1. Both surfaces now draw on the same 16,730-product library.** New in CoreServices:
+- `CatalogMatcher.specificMatch(for:in:)` — a **strict** menu-line-to-product rule, deliberately
+  stricter than the store search. A match counts only when one name contains the other whole
+  (either direction, so "Josh Cellars Cabernet" matches "Josh Cellars Cabernet Sauvignon"), the
+  menu line has at least two words, and the shared words include at least one non-generic word.
+  That last guard is the important one: "Cabernet Sauvignon", "House Red" and "Draft IPA" are made
+  entirely of style and vessel words, so a catalog hit on them would add nothing the style chart
+  already says while risking a wrong producer. Those keep falling through to the chart.
+- `CatalogBackedKnowledge` — a `BeverageKnowledge` decorator with the tier order: curated brand
+  table (hand-vetted, wins where it matches) → store catalog → style chart → category fallback.
+  Reported as `.brandMatch(matched:)` so the existing honesty note explains itself.
+- **The catalog's container size is never used for a menu.** A catalog row's 750 mL is a bottle on a
+  shelf; a menu line means a pour. Size still comes from the category. There's a test for that.
+- Wired via `MenuPipeline(knowledge:)`, which already took an injectable knowledge, so no signature
+  changed. `ResultsViewModel`, `CompareViewModel` and `QuickCompareViewModel` all default to it, so
+  the three screens can't be pointed at different libraries by accident. An empty catalog is a
+  provable no-op (also a test), which is what makes this safe before the bundled file exists.
+- `CatalogBackedKnowledgeTests` (11 cases), mostly negative: the false-precision cases are the ones
+  worth pinning. Rule validated in Python against realistic menu lines before porting.
+- Also fixed while in there: `ResultsViewModel` was constructing a second `MenuPipeline` in its
+  init and throwing it away.
+
+**2. Metric sizes where the trade uses metric.** `ValueFormat.volume(_:)` prints a bottle size in
+mL/L and everything else in ounces: a wine bottle reads "750 mL", a handle "1.75 L", a split
+"187 mL", while a 12 oz can, a 5 oz pour and a 1.5 oz shot stay in ounces, which is how a bar states
+a pour. Detection is by **volume, not category**, because a bottle of wine is metric while a glass
+of the same wine is a 5 oz pour and only the volume distinguishes them.
+
+Two collisions found and fixed by giving a clean whole number of ounces priority: a 60 oz pitcher
+was reading as "1.75 L" (1,774 mL is within tolerance of 1,750) and a 24 oz can as "700 mL". No real
+metric bottle size lands on a whole ounce, so the two rules never fight. Verified across 18 real
+sizes.
+
+Applied to the size chips on all three screens, the package totals ("six 750 mL bottles" now reads
+"4.5 L", not "152.2 oz"), and the **edit field itself**, which now switches to mL for a bottle size
+and converts both ways, so nobody types 25.4 for a wine bottle.
+
+**Priority reminder, now six features deep:** RevenueCat remains untouched and remains the only
+thing that can disqualify the Shipaton entry.
+
+---
+
+## STATUS (2026-09-05, part 5) — Search performance on the real 16,730-product catalog
+
+*The catalog shipped and typing was laggy. Two separate causes, both fixed.*
+
+**1. Search allocated instead of computing.** `InMemoryStoreCatalog` lowercased and re-split every
+product name *inside* the query loop: `Array(haystack)` per product per call, plus a fresh word
+split for the word-prefix tier. Over 16,730 products that is roughly 50,000 array allocations per
+typed character. It read as lag with a near-idle CPU gauge and 45 MB of memory, because the cost was
+allocation churn, not arithmetic.
+
+Rewritten to precompute everything at init: each product is stored as a **folded byte array**
+(`[UInt8]`) with its **word-start offsets** already marked, so a query folds once and then every
+tier check is index comparison with zero allocation. Same five tiers, same ordering, same public
+API; `search` and `product(withUPC:)` are unchanged from the outside.
+
+**2. Name folding, which also fixed real search misses.** The folded form is lowercase ASCII:
+accents stripped, apostrophes and periods *deleted*, everything else a word break. That was needed
+for correctness as much as speed:
+- `moet` now finds "Moët & Chandon" (and so does `moët`).
+- `titos` now finds "Tito's Handmade Vodka". Previously the apostrophe became a word break, folding
+  the name to `tito s`, and the search returned nothing.
+- `vsop` finds "St. Remy - V.S.O.P.", while "St. Remy" still folds to `st remy` because the space
+  after the period supplies the break.
+- `chateau margaux` finds "MARGAUX - CHATEAU MARGAUX 2014". This matters generally: BC names lead
+  with the appellation, so the " - " separator has to fold to a plain space or every producer search
+  fails.
+Six new folding tests in `StoreCatalogSearchTests` (18 cases total), all verified in Python against
+the real ranking before porting.
+
+**3. The console noise.** "The variant selector cell index number could not be found" is a benign
+CoreText message, but it fires because catalog names carry invisible characters. The importer now
+has a `sanitize` step stripping variation selectors, zero-width spaces and joiners, directional
+marks, the BOM, soft hyphens, and control characters, plus normalizing curly quotes and en/em dashes.
+**Re-run the importer to clear it.**
+
+**4. Compare now requires 2 characters** before searching, matching the quick comparison. One letter
+over 17,000 products returns a list nobody reads.
+
+**Catalog build results (for the record):** 16,730 products, 2.0 MB, ABV on 11,090 (66%). BC
+contributed 8,250 rows with 8,236 percentages. The barcode join filled only 134, because PLCB and BC
+stock different products and list different package barcodes where they overlap. The uncovered 34%
+is mostly PLCB wine, which has no ABV or proof column and falls back to the varietal style chart.
+
+**No project changes needed for the catalog:** the target uses an Xcode 16 synchronized group over
+the whole `BangForBuck/` folder, so `AppTarget/Resources/store_catalog.json` is a member as soon as
+it exists on disk. **Worth checking before submission:** that same synchronization means `photos/`
+(~4 MB of test menus), `docs/`, and `Tooling/` are also in the target and may be shipping in the
+bundle. Move them out of `BangForBuck/` or add target-membership exceptions.
+
+---
+
+## STATUS (2026-09-05, part 4) — Found a real ABV source; catalog importer rebuilt around it
+
+**The wine-ABV problem is solved, and by a better source than expected.** British Columbia's Liquor
+Distribution Branch publishes its **entire retail catalog** as open data, monthly CSV, and every row
+carries an alcohol percentage. Schema verified against the live April 2026 resource:
+`PRODUCT_LONG_NAME`, `PRODUCT_ALCOHOL_PERCENT`, `PRODUCT_LITRES_PER_CONTAINER`,
+`PRD_CONTAINER_PER_SELL_UNIT` (the pack count), `PRODUCT_BASE_UPC_NO`, plus a three-level category
+taxonomy. About 10,000 SKUs, thousands of them wine, with real percentages. Retail sites do not
+publish wine ABV; a liquor board does, because it has to.
+
+**The join that makes it useful for a PA shopper:** the PLCB wholesale catalogs say what is on a
+Pennsylvania shelf (name, size, UPC, no ABV, no beer); BC says how strong it is (ABV, keyed by UPC).
+`enrich_by_upc` matches them on barcode and reports how many percentages it filled. Open Food Facts
+stays opt-in for beer, because it is ODbL and carries share-alike obligations that a
+`--bcldb --plcb` build avoids.
+
+- `Tooling/build_store_catalog.py` rewritten: `--bcldb` (with `--bcldb-url` / `--bcldb-file`),
+  `--plcb`, `--off`, `--drop-without-abv`, `--dry-run`. Emits name, category, ABV, container mL,
+  pack count, UPC. **Run end to end here against real BC rows**: 13/13 parsed, 12 with an ABV,
+  categories mapped, pack counts read (36-can Coors case, 4-pack tall cans), barcodes zero-padded.
+  Name prettifier handles SHOUTED catalog names, apostrophes ("Tito's" not "Tito'S"), and roman
+  numerals ("Louis XIII" not "Louis Xiii").
+- `docs/StoreCatalogSources.md` (new): every source, the verified BC schema as a table, the licence
+  position on each, the rebuild commands, and why the store catalog is a separate artifact from the
+  curated menu brand table.
+- Cross-check on accuracy: BC lists High Noon at 4.5%, matching the label independently. Good sign
+  for the dataset generally.
+
+**Still not imported: price.** Local, weekly, store-specific. A bundled price would be the one
+fabricated number in the app (§10).
+
+**Dependency note (fixed after a failed first run):** the importer was written against `requests`,
+which is not in the standard library and is not on a stock macOS Python. Both `build_store_catalog.py`
+and `inspect_store_catalog.py` now use `urllib.request` with a browser User-Agent (some government
+hosts 403 the default Python one), so **`--bcldb` runs with zero `pip install`**. Only `--plcb`
+needs `pandas`/`openpyxl`, and it now says so with a clear message instead of a traceback. Also
+worth knowing: `zsh` does not treat `#` as a comment interactively, so a trailing explanatory
+comment on a pasted command arrives as an argument and argparse rejects it.
+
+**Ran it (2026-09-05): 16,730 products, 2.0 MB, ABV on 66%.** BC contributed 8,250 rows with 8,236
+percentages; PLCB added wine 6,293 / spirits 4,651 / RTDC 290. The barcode join filled only 134
+missing ABVs, fewer than expected, because PLCB and BC stock different products and list different
+package barcodes where they overlap. 2 MB needs no indexing and 16,730 rows is fine for the
+in-memory ranked search. **Real PLCB headers turned out to be `Item Description`, `UPC`, `Proof`,
+with no size column at all**, so the importer now derives spirits/RTDC ABV from proof ÷ 2 and parses
+the container size (and pack count, from the "4/187ML" form) out of the description, stripping it
+off the display name. PLCB wine has neither ABV nor proof, which is why its rows fall back to the
+varietal style chart. Both fixes are in the attached importer; re-run to pick them up.
+
+**What is left to do on this:** run the importer on the Mac (it needs a network, which this
+environment lacks), check the resulting file size, and add it to the Xcode target's Resources. If it
+is large enough to slow launch, index it rather than parsing it whole. Then the barcode scanner,
+which now has both a seam (`StoreCatalog.product(withUPC:)`) and a barcode-bearing dataset.
+
+**Priority reminder:** RevenueCat is still untouched and still the only thing that can disqualify
+the Shipaton entry.
+
+---
+
+## STATUS (2026-09-05, part 3) — Quick comparison (third feature); shared row + edit sheet
 
 *Supersedes nothing; adds a feature and de-duplicates the two comparison screens. Still uncompiled.*
 

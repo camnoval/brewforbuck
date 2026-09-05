@@ -40,11 +40,11 @@ final class CompareViewModel: ObservableObject {
     /// Injected behind the contracts (§6). Swapping the curated brand list for a bundled PLCB plus
     /// Open Food Facts catalog, or adding a barcode lookup, happens here and nowhere else.
     init(
-        catalog: any StoreCatalog = InMemoryStoreCatalog.curatedBrands,
-        knowledge: any BeverageKnowledge = StaticBeverageKnowledge()
+        catalog: any StoreCatalog = BundledStoreCatalog.shared,
+        knowledge: (any BeverageKnowledge)? = nil
     ) {
         self.catalog = catalog
-        self.knowledge = knowledge
+        self.knowledge = knowledge ?? CatalogBackedKnowledge(catalog: catalog)
     }
 
     // Derived views for the UI.

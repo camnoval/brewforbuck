@@ -28,7 +28,7 @@ struct ContentView: View {
                 }
         }
         .onAppear { load() }
-        .onChange(of: menuIndex) { _ in load() }
+        .onChange(of: menuIndex) { _, _ in load() }
     }
 
     private func load() {

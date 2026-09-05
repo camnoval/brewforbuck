@@ -45,9 +45,60 @@ enum ValueFormat {
         String(format: "$%.2f", dollars)
     }
 
-    /// "12 × 12 oz" for a pack, or just "750 mL"-style single-container text when count is 1.
+    static let millilitersPerOunce = 29.5735
+
+    /// Bottle sizes the trade states in metric. A wine bottle is 750 mL, never 25.4 oz; a handle is
+    /// 1.75 L, never 59.2 oz. Printing those in ounces is technically true and reads as wrong.
+    static let metricSizes: [Double] = [50, 100, 187, 200, 250, 330, 375, 500, 700, 720, 750,
+                                        1000, 1500, 1750, 3000, 5000]
+
+    /// The size as the trade states it: metric for bottle sizes, ounces for everything else. A
+    /// 750 mL wine reads "750 mL", a 1.75 L handle reads "1.75 L", a 16 oz can stays "16 oz", and a
+    /// 5 oz pour stays "5 oz", which is how a bar states a pour.
+    ///
+    /// Detection is by volume, not by category, because a *bottle* of wine is metric while a
+    /// *glass* of the same wine is a 5 oz pour, and only the volume tells them apart.
+    ///
+    /// A clean whole number of ounces always wins. Without that guard a 60 oz pitcher reads as
+    /// "1.75 L" (1,774 mL is within tolerance of 1,750) and a 24 oz can as "700 mL". No real metric
+    /// bottle size lands on a whole ounce, so the two rules never fight.
+    static func volume(_ fluidOunces: Double) -> String {
+        let rounded = fluidOunces.rounded()
+        if abs(fluidOunces - rounded) < 0.05 { return ounces(fluidOunces) }
+
+        let milliliters = fluidOunces * millilitersPerOunce
+        for size in metricSizes where abs(milliliters - size) <= size * 0.015 {
+            return metric(size)
+        }
+        return ounces(fluidOunces)
+    }
+
+    /// True when `volume(_:)` would print this size in metric, so an input field can label itself.
+    static func isMetricSize(_ fluidOunces: Double) -> Bool {
+        let rounded = fluidOunces.rounded()
+        if abs(fluidOunces - rounded) < 0.05 { return false }
+        let milliliters = fluidOunces * millilitersPerOunce
+        return metricSizes.contains { abs(milliliters - $0) <= $0 * 0.015 }
+    }
+
+    /// Millilitres under a litre, litres at or above it.
+    static func metric(_ milliliters: Double) -> String {
+        guard milliliters >= 1000 else { return "\(Int(milliliters.rounded())) mL" }
+        let liters = milliliters / 1000
+        let whole = liters.rounded()
+        return abs(liters - whole) < 0.01 ? "\(Int(whole)) L" : String(format: "%g L", liters)
+    }
+
+    /// "12 × 12 oz" for a pack, or the container's own size when the count is 1.
     static func package(count: Int, unitOunces: Double) -> String {
-        count > 1 ? "\(count) × \(ounces(unitOunces))" : ounces(unitOunces)
+        count > 1 ? "\(count) × \(volume(unitOunces))" : volume(unitOunces)
+    }
+
+    /// The whole package, kept in the unit the container was stated in, so six 750 mL bottles read
+    /// "4.5 L" rather than "152.2 oz".
+    static func totalVolume(unitOunces: Double, count: Int) -> String {
+        let total = unitOunces * Double(max(1, count))
+        return isMetricSize(unitOunces) ? metric(total * millilitersPerOunce) : ounces(total)
     }
 
     /// Standard drinks, with the singular/plural fixed up.

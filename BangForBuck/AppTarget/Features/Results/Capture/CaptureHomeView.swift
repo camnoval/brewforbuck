@@ -134,7 +134,7 @@ struct CaptureHomeView: View {
                                         set: { if !$0 { exportText = nil } })) {
                 if let exportText { OCRDebugExportSheet(text: exportText) }
             }
-            .onChange(of: libraryItem) { item in
+            .onChange(of: libraryItem) { _, item in
                 guard let item else { return }
                 Task { @MainActor in await loadLibrary(item) }
             }

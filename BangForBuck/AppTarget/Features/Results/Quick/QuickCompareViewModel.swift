@@ -42,12 +42,15 @@ final class QuickCompareViewModel: ObservableObject {
     private let catalog: any StoreCatalog
     private let knowledge: any BeverageKnowledge
 
+    /// `knowledge` defaults to the catalog-backed layer so a *typed* drink name gets a real label
+    /// ABV where the catalog knows the product, and a style-chart estimate where it only knows the
+    /// category. Same library the store calculator searches.
     init(
-        catalog: any StoreCatalog = InMemoryStoreCatalog.curatedBrands,
-        knowledge: any BeverageKnowledge = StaticBeverageKnowledge()
+        catalog: any StoreCatalog = BundledStoreCatalog.shared,
+        knowledge: (any BeverageKnowledge)? = nil
     ) {
         self.catalog = catalog
-        self.knowledge = knowledge
+        self.knowledge = knowledge ?? CatalogBackedKnowledge(catalog: catalog)
     }
 
     var ranked: [RankedEditableProduct] { session.rankedProducts }

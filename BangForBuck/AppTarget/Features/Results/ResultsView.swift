@@ -173,7 +173,7 @@ private struct RankRow: View {
 
                 HStack(spacing: 6) {
                     MetaChip(text: ValueFormat.abv(drink.abv.value))
-                    MetaChip(text: ValueFormat.ounces(drink.size.value.fluidOunces))
+                    MetaChip(text: ValueFormat.volume(drink.size.value.fluidOunces))
                     ProvenanceChip(isEstimated: drink.hasEstimate)
                 }
 

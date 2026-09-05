@@ -8,6 +8,7 @@
 import Foundation
 import Combine
 import CoreModel
+import CoreContracts
 import CoreServices
 
 /// The thin shell over the pure `MenuSession` (§7, §4): it holds one session, republishes it to
@@ -22,11 +23,22 @@ final class ResultsViewModel: ObservableObject {
         didSet { session.metric = metric }
     }
 
-    private let pipeline = MenuPipeline()
+    private let pipeline: MenuPipeline
 
-    init(lines: [String] = [], metric: ValueMetric = .standardDrinksPerDollar) {
+    /// The knowledge layer is injected so the menu scanner draws on the **same** product library as
+    /// the store calculator: `CatalogBackedKnowledge` consults the bundled catalog (thousands of
+    /// real label ABVs) before falling back to the style chart. The curated brand table still wins
+    /// where it matches, and a menu line that names a category rather than a product still gets a
+    /// chart estimate, so nothing gains false precision. See `CatalogMatcher` for that rule.
+    init(
+        lines: [String] = [],
+        metric: ValueMetric = .standardDrinksPerDollar,
+        knowledge: any BeverageKnowledge = CatalogBackedKnowledge(catalog: BundledStoreCatalog.shared)
+    ) {
+        let pipeline = MenuPipeline(knowledge: knowledge)
+        self.pipeline = pipeline
         self.metric = metric
-        self.session = MenuPipeline().makeSession(lines: lines, metric: metric)
+        self.session = pipeline.makeSession(lines: lines, metric: metric)
     }
 
     /// Load a freshly captured (or sampled) menu. Replaces the session — any prior edits are for the

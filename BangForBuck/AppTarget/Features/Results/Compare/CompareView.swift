@@ -22,7 +22,7 @@ import CoreServices
 ///
 /// State lives in `CompareViewModel` and the pure `StoreSession`. This view renders and dispatches.
 struct CompareView: View {
-    @StateObject private var viewModel = CompareViewModel(catalog: BundledStoreCatalog.shared)
+    @StateObject private var viewModel = CompareViewModel()
 
     /// The product currently open in the edit sheet (`nil` = closed).
     @State private var editing: EditableProduct?
@@ -361,7 +361,10 @@ private struct AddProductFlow: View {
                 }
             }
             .onChange(of: query) { _, newValue in
-                matches = viewModel.search(newValue)
+                // Two characters minimum, same as the quick comparison. One letter over a
+                // 17,000-product catalog returns a list nobody wants to read.
+                let trimmed = newValue.trimmingCharacters(in: .whitespaces)
+                matches = trimmed.count >= 2 ? viewModel.search(trimmed) : []
             }
             .task {
                 // A sheet's first responder isn't settled the instant it appears, so give the
@@ -522,7 +525,7 @@ private struct ProductForm: View {
                 Text("Package")
             } footer: {
                 if let ounces = unitOunces {
-                    Text("Total: \(ValueFormat.ounces(ounces * Double(count)))")
+                    Text("Total: \(ValueFormat.totalVolume(unitOunces: ounces, count: count))")
                 }
             }
 

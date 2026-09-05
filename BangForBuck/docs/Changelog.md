@@ -3,6 +3,44 @@
 *Append-only history (§2). Newest on top. The Handoff is the live "where we are"; this is
 the log — don't let them merge.*
 
+## 2026-09-05 · Menu scanner on the shared catalog; metric container sizes
+- **`CatalogBackedKnowledge` + `CatalogMatcher` (CoreServices):** the menu scanner now consults the
+  same bundled product catalog as the store calculator, behind a strict match rule (one name
+  contains the other whole, two-word minimum, at least one shared non-generic word) so a menu line
+  naming a *category* keeps its style-chart estimate instead of inheriting a specific producer's
+  ABV. Tier order: curated brand table → catalog → style chart → category fallback. The catalog's
+  bottle size is never used for a menu pour. Wired into all three view models; an empty catalog is a
+  no-op. 11 tests.
+- **`ValueFormat.volume(_:)`:** bottle sizes now display in mL/L (750 mL, 1.75 L, 187 mL) while
+  cans, pours and shots stay in ounces. A clean whole number of ounces takes priority, which stops a
+  60 oz pitcher reading as "1.75 L" and a 24 oz can as "700 mL". Package totals follow the container
+  unit, and the exact-size edit field switches to mL for bottles and converts both ways.
+- Fixed `ResultsViewModel` building a throwaway second `MenuPipeline` in its init.
+
+## 2026-09-05 · Search performance and name folding on the 16,730-product catalog
+- **`InMemoryStoreCatalog` rewritten for speed:** names are precomputed into folded `[UInt8]` arrays
+  with word-start offsets, so a query allocates nothing per product. The previous version built a
+  `[Character]` array per product per keystroke (~50,000 allocations per typed character over the
+  real catalog), which showed up as lag with an idle CPU gauge.
+- **Name folding fixed real misses too:** accents stripped so "moet" finds "Moët"; apostrophes and
+  periods deleted so "titos" finds "Tito's" and "vsop" finds "V.S.O.P."; separators folded to spaces
+  so "chateau margaux" finds "MARGAUX - CHATEAU MARGAUX 2014". Six new tests.
+- **Importer sanitizes invisible characters** (variation selectors, zero-width spaces, directional
+  marks, BOM, soft hyphens, controls) and normalizes curly quotes and dashes, which clears a stream
+  of benign CoreText "variant selector" console warnings.
+- Compare search now needs 2 characters, matching the quick comparison.
+
+## 2026-09-05 · Store catalog sourcing: BC LDB open data + barcode join
+- Found a comprehensive open ABV source: the **BC Liquor Distribution Branch** monthly price-list
+  CSV carries name, ABV, container litres, pack count, and UPC on ~10,000 SKUs including thousands
+  of wines. Schema verified against the live April 2026 resource.
+- `Tooling/build_store_catalog.py` rebuilt around it (`--bcldb`, `--plcb`, `--off`,
+  `--drop-without-abv`, `--dry-run`), including an `enrich_by_upc` join so a PLCB shelf SKU with no
+  percentage inherits one from the BC row with the same barcode. Tested end to end on real BC rows.
+- `docs/StoreCatalogSources.md` (new): sources, verified schema, licence position, rebuild commands,
+  and why the store catalog stays separate from the curated menu brand table.
+- Prices still deliberately excluded.
+
 ## 2026-09-05 · Quick comparison (menu drinks) + shared comparison UI
 - **New feature, `Features/Quick/`:** type two to five drinks off a menu with their prices and see
   them ranked by standard drinks per dollar. Defaults to a single serving (5 oz wine pour, 1.5 oz

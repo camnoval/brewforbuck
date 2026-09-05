@@ -27,9 +27,14 @@ import CoreServices
 enum BundledStoreCatalog {
 
     /// Everything the store search can find. Built once, lazily.
-    static let shared: any StoreCatalog = load()
+    ///
+    /// `nonisolated` because this target builds with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`,
+    /// which would otherwise make it main-actor-isolated and unusable as a **default argument** in
+    /// a view model's `init` (default arguments are evaluated in a nonisolated context). Safe to
+    /// mark: it is an immutable `let` of a `Sendable` value, read once and never mutated.
+    nonisolated static let shared: any StoreCatalog = load()
 
-    private static func load() -> any StoreCatalog {
+    nonisolated private static func load() -> any StoreCatalog {
         guard let url = Bundle.main.url(forResource: "store_catalog", withExtension: "json") else {
             return InMemoryStoreCatalog.curatedBrands
         }
@@ -48,11 +53,14 @@ enum BundledStoreCatalog {
 
     // MARK: - Wire format (matches Tooling/build_store_catalog.py)
 
-    private struct CatalogFile: Decodable {
+    /// `nonisolated` for the same reason as `shared` above: under this target's default main-actor
+    /// isolation, even a *conformance* is isolated, so decoding these from the nonisolated `load()`
+    /// is rejected. Plain immutable data with no actor state, so there is nothing to protect.
+    nonisolated private struct CatalogFile: Decodable {
         let products: [Entry]
     }
 
-    private struct Entry: Decodable {
+    nonisolated private struct Entry: Decodable {
         let name: String
         let category: String
         let abv: Double?
@@ -60,7 +68,7 @@ enum BundledStoreCatalog {
         let units: Int?
         let upc: String?
 
-        var asCatalogProduct: CatalogProduct? {
+        nonisolated var asCatalogProduct: CatalogProduct? {
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return nil }
             return CatalogProduct(

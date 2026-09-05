@@ -5,14 +5,6 @@
 //  Created by Noval, Cameron on 9/5/26.
 //
 
-
-//
-//  QuickCompareView.swift
-//  BangForBuck
-//
-//  Created by Noval, Cameron on 9/5/26.
-//
-
 import SwiftUI
 import CoreModel
 import CoreContracts
@@ -29,7 +21,7 @@ import CoreServices
 /// The ranking underneath is the same pure `StoreSession` the store calculator uses, so identical
 /// numbers always produce an identical answer.
 struct QuickCompareView: View {
-    @StateObject private var viewModel = QuickCompareViewModel(catalog: BundledStoreCatalog.shared)
+    @StateObject private var viewModel = QuickCompareViewModel()
 
     @State private var editing: EditableProduct?
     @State private var adding = false
@@ -355,7 +347,7 @@ private struct QuickAddDrinkSheet: View {
                     Text("Size")
                 } footer: {
                     if let ounces = Double(ouncesText), ounces > 0, count > 1 {
-                        Text("Total: \(ValueFormat.ounces(ounces * Double(count)))")
+                        Text("Total: \(ValueFormat.totalVolume(unitOunces: ounces, count: count))")
                     }
                 }
 

@@ -1,11 +1,3 @@
-#
-//  inspect_store_catalog.py
-//  BangForBuck
-//
-//  Created by Noval, Cameron on 9/5/26.
-//
-
-
 #!/usr/bin/env python3
 """inspect_store_catalog - dump the REAL shape of the source catalogs before parsing them (§5).
 
@@ -19,14 +11,15 @@ Usage:
     python3 Tooling/inspect_store_catalog.py plcb wine        # just one
     python3 Tooling/inspect_store_catalog.py off /path/to/openfoodfacts-products.jsonl.gz
 
-Requires: pandas, openpyxl, requests  (pip3 install pandas openpyxl requests)
-Needs a network for the PLCB URLs.
+Requires: pandas + openpyxl for the PLCB .xlsx files (pip3 install pandas openpyxl).
+The Open Food Facts mode needs nothing beyond the standard library. Needs a network for PLCB.
 """
 
 import gzip
 import io
 import json
 import sys
+import urllib.request
 
 PLCB_CATALOGS = {
     "rtdc": "https://www.apps.lcb.pa.gov/webapp/reports/Wholesale_RTDC_Catalog_Full.xlsx",
@@ -38,9 +31,21 @@ PLCB_CATALOGS = {
 FIELD_DESCRIPTIONS = "https://www.apps.lcb.pa.gov/webapp/reports/Product_Catalog_Field_Descriptions.csv"
 
 
+USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+
+
+def download(url, timeout=300):
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read()
+
+
 def inspect_plcb(which=None):
-    import pandas as pd
-    import requests
+    try:
+        import pandas as pd
+    except ImportError:
+        raise SystemExit("Reading .xlsx needs: pip3 install pandas openpyxl")
 
     print(f"Field descriptions live at:\n  {FIELD_DESCRIPTIONS}\n")
 
@@ -50,11 +55,9 @@ def inspect_plcb(which=None):
         print(f"{name}: {url}")
         print("=" * 78)
         try:
-            response = requests.get(url, timeout=120)
-            response.raise_for_status()
             # Read every column as text first: UPCs and SCCs are long digit strings that pandas
             # will happily turn into floats and corrupt (1.23e+13).
-            frame = pd.read_excel(io.BytesIO(response.content), dtype=str)
+            frame = pd.read_excel(io.BytesIO(download(url, timeout=120)), dtype=str)
         except Exception as error:  # noqa: BLE001 - this is a diagnostic script
             print(f"  FAILED: {error}\n")
             continue

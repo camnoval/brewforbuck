@@ -122,7 +122,11 @@ struct ProductEditSheet: View {
 
     @State private var abvText = ""
     @State private var priceText = ""
+    /// Canonical, always fluid ounces. The chip picker writes here.
     @State private var ouncesText = ""
+    /// What the text field shows: millilitres for a bottle size, ounces otherwise.
+    @State private var sizeText = ""
+    @State private var isMetric = false
     @State private var count = 1
     @State private var didLoad = false
 
@@ -141,14 +145,17 @@ struct ProductEditSheet: View {
                 Section("Size") {
                     SizeChipPicker(options: sizeOptions, ounces: $ouncesText)
 
+                    // The field follows the unit the size is stated in. Nobody knows a wine bottle
+                    // as 25.4 oz, so a metric container is edited in millilitres and converted on
+                    // the way in and out; a can stays in ounces.
                     HStack {
                         Text("Exact size")
                         Spacer()
-                        TextField("fl oz", text: $ouncesText)
+                        TextField(isMetric ? "mL" : "fl oz", text: $sizeText)
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
                             .frame(maxWidth: 90)
-                        Text("oz").foregroundStyle(.secondary)
+                        Text(isMetric ? "mL" : "oz").foregroundStyle(.secondary)
                     }
 
                     Stepper(value: $count, in: 1...48) {
@@ -200,6 +207,25 @@ struct ProductEditSheet: View {
                 }
             }
             .onAppear(perform: load)
+            // A chip tap writes ounces; mirror it into the field in whichever unit reads better.
+            .onChange(of: ouncesText) { _, newValue in
+                guard let ounces = Double(newValue), ounces > 0 else { return }
+                let metric = ValueFormat.isMetricSize(ounces)
+                let shown = metric
+                    ? ValueFormat.editable(ounces * ValueFormat.millilitersPerOunce)
+                    : ValueFormat.editable(ounces)
+                if shown != sizeText || metric != isMetric {
+                    isMetric = metric
+                    sizeText = shown
+                }
+            }
+            // Typing in the field writes back to the canonical ounces.
+            .onChange(of: sizeText) { _, newValue in
+                guard let typed = Double(newValue), typed > 0 else { return }
+                let ounces = isMetric ? typed / ValueFormat.millilitersPerOunce : typed
+                let canonical = ValueFormat.editable(ounces)
+                if canonical != ouncesText { ouncesText = canonical }
+            }
         }
     }
 
@@ -207,7 +233,14 @@ struct ProductEditSheet: View {
         guard !didLoad else { return }
         didLoad = true
         abvText = ValueFormat.editable(product.abv.value)
-        ouncesText = ValueFormat.editable(product.unitVolume.fluidOunces)
+
+        let ounces = product.unitVolume.fluidOunces
+        ouncesText = ValueFormat.editable(ounces)
+        isMetric = ValueFormat.isMetricSize(ounces)
+        sizeText = isMetric
+            ? ValueFormat.editable(ounces * ValueFormat.millilitersPerOunce)
+            : ValueFormat.editable(ounces)
+
         count = product.count
         if let price = product.price {
             priceText = String(format: "%.2f", price.dollars)
