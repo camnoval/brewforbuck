@@ -5,7 +5,78 @@ here — keep this lean. Newest note on top; each new note says plainly what it 
 
 ---
 
-## ⇢ STATUS (2026-09-02) — OCR/parse pipeline is good enough; pivoting to breadth + other features
+## ⇢ STATUS (2026-09-05) — Store calculator (Goal 2) is built; **RevenueCat is now the critical path**
+
+*Supersedes the 09-02 status note below re: next steps. The parser situation is unchanged — that note
+is still accurate about OCR; ignore only its numbered next-step list, which items 3 and 4 have now
+consumed.*
+
+**Landed this session (Compare / store calculator, per owner's call):**
+- `CoreServices/StoreSession.swift` (new, pure): `EditableProduct` (id, unit volume, count,
+  `Provenance<Double>` ABV, optional `Price`) + `StoreSession` with `rankedProducts` /
+  `needsPriceProducts` / add / setPrice / correctABV / setPackage / remove. Deliberately the same
+  shape as `EditableDrink`/`MenuSession`, so both invariants read identically on the store side:
+  a priceless package waits in its own bucket (§10), and a brand-seeded ABV is `.estimated` with a
+  note until the shopper types the number off the can (§11).
+- `StoreComparison` refactored to expose the shared `StoreValue` / `value(totalStandardDrinks:
+  dollars:)` / `sortsBefore(...)` primitives; `rank` and `StoreSession.rankedProducts` both call
+  them, so the one-shot and interactive paths can't drift. `ContainerSize` gained
+  `Hashable`/`Identifiable` (so the app needs no retroactive conformance for its picker).
+  **Behaviour is unchanged — the existing `StoreComparisonTests` should still pass verbatim.**
+- `Tests/CoreServicesTests/StoreSessionTests.swift` (new, 12 cases): worked example (6× 12 oz at
+  5% = 6.0 standard drinks → 0.60/$ → $1.67 per drink), the handle-beats-wine ordering, **parity
+  with `StoreComparison.rank`**, name tiebreak, zero-alcohol → infinite $/drink, the two invariants,
+  id stability across removal, stale-id no-ops.
+- `AppTarget/Features/Shared/ValueChips.swift` (new): `SectionHeader`/`RankMedal`/`MetaChip`/
+  `ProvenanceChip`/`PricePill` lifted out of `ResultsView` (they were `private`, so Compare couldn't
+  reuse them) plus a `ValueFormat` namespace. `ProvenanceChip` now takes its labels, and `PricePill`
+  its caption, so each screen names its own thing ("menu price" vs "pack price").
+- `AppTarget/Features/Compare/` (new): `CompareViewModel` (thin `@MainActor` shell over
+  `StoreSession`, same shape as `ResultsViewModel`) and `CompareView` — ranked shelf list reusing the
+  Results row vocabulary, add-product form with a searchable **655-brand** picker off
+  `BrandCatalog.all`, `ContainerSize.presets` + an "Other…" custom-ounces path, count stepper,
+  per-row edit sheet, "Waiting on a price" bucket, and a store-flavoured calculation explainer.
+  Entry point: a "Compare store prices" button on `CaptureHomeView` → `navigationDestination`.
+- **Brand table regenerated** — `beverages.json` was already valid (the `2/.4` bug is fixed, 655
+  brands) but `GeneratedBrandTable.swift` was still the stale **161-brand** build, so the picker and
+  every brand-tier ABV lookup were missing ~494 products. Re-ran `Tooling/generate_brand_table.sh`.
+  Checked first: all eight brand ABVs pinned by `BrandTableTests` resolve identically at 655.
+  **One consequence, fixed:** `StaticBeverageKnowledgeTests.testSectionRefinesCategoryButChartKeepsABV`
+  used "Community Mosaic IPA" as a stand-in for a *generic* IPA, but that beer is now a real entry in
+  the 655-brand table at its true 7.5% — so the brand tier correctly beat the 6.5% IPA style chart
+  and the test failed at 7.5 ≠ 6.5. The engine was right; the fixture was stale. Renamed to
+  "Nonesuch Placeholder IPA" (verified absent from `beverages.json`) and the test now asserts
+  `.styleChart` as the *tier*, so if a future JSON edit shadows it the failure says so instead of
+  looking like a bad ABV. Watch for this whenever the dataset grows: two other fixtures
+  ("Guinness Draught", "Weihenstephan") now resolve via the brand tier rather than the chart, but
+  their ABVs agree (4.2 / 5.4) so those tests still pass on the same numbers.
+- **`INFOPLIST_KEY_NSCameraUsageDescription` added** to both build configs. It was absent from
+  `project.pbxproj` and there's no `Info.plist`, so "Take a photo" would have trapped on
+  presentation — the camera path was never actually exercised on device.
+- Cosmetic fix from the old list: the size chip now prints `1.5 oz` for a shot instead of rounding to
+  `2 oz` (`ValueFormat.ounces`, one decimal only when the value isn't whole).
+
+**⚠ Nothing here has been compiled** — it was written without a Swift toolchain. Run
+`cd Core && swift test` and build `AppTarget` in Xcode first; the Core additions are pure and
+inline-fixture tested, the SwiftUI is the part to eyeball. `Features/` is inside a
+`fileSystemSynchronizedGroups` root group, so the two new folders need no `.xcodeproj` surgery.
+
+**Suggested next steps (new session), in priority order:**
+1. **RevenueCat — this is the schedule risk, not a feature.** Week 2 of the plan (Sep 8–14) is
+   `remove_ads` IAP + entitlement gating + RevenueCat Ads + a Paywall screen, and *none* of it
+   exists: no `Features/Paywall/`, no conformer for `PurchaseController`/`AdPresenter`. It's a
+   Shipaton **qualification** requirement, the IAP has to be approved alongside the build, and the
+   plan submits ~Sep 18–20. Everything else below is optional next to this.
+2. Store-side polish if it survives device testing: the comparison doesn't persist across launches
+   (no storage layer exists) — decide whether an aisle list should survive backgrounding.
+3. `ImageDeskew` — **the file described in the 09-02 (part 6) note was never committed**; it isn't in
+   `Infrastructure/`. It has to be written, not wired. Pair with the "retake straighter" capture hint.
+4. Run 3–5 brand-new menus through the DEBUG OCR export; triage by failure class before coding.
+5. Store screenshots + listing copy (informational price-comparison framing, R3).
+
+---
+
+## STATUS (2026-09-02) — OCR/parse pipeline is good enough; pivoting to breadth + other features
 
 All five test menus now parse acceptably. M/G (the hard one) is confirmed on device: horizontal
 banding done (part 7), superscript-cent prices + shared-grid inheritance (part 8), cocktail

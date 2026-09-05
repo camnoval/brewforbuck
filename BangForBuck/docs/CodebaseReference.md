@@ -63,8 +63,9 @@ no SwiftUI/UIKit/Vision import.
   - `PricedDrink.swift` — ranker input; `init?` refuses `.nonAlcoholic` (Change B).
   - `RankedDrink.swift` — ranker output holder (value + rank).
   - `ValueMetric.swift` — `.standardDrinksPerDollar` (v1) + `.caloriesPerDollar` (v2).
-  - `TextObservation.swift` — pure `TextObservation` + normalized `TextBox` (Vision's bottom-left
-    origin). The OCR handoff type; lets `LineAssembler` be tested without Vision.
+  - `TextBox.swift` — pure `TextObservation` + normalized `TextBox` (Vision's bottom-left
+    origin). The OCR handoff type; lets `LineAssembler` be tested without Vision. *(The file is named
+    for the box, not the observation — grep `TextObservation` and you'll land here.)*
 - **`Sources/CoreContracts/`** ✅ Phase 3 — four protocols + default knowledge + doubles:
   - `TextRecognizer.swift` — protocol + `CapturedImage` (Foundation-free photo handle).
   - `BeverageKnowledge.swift` — protocol + `BeverageProfile` + `EstimateSource`
@@ -72,7 +73,11 @@ no SwiftUI/UIKit/Vision import.
   - `PurchaseController.swift`, `AdPresenter.swift` — entitlement + ads protocols.
   - `StaticBeverageKnowledge.swift` — brand table → style/varietal chart → category fallback,
     each flagged by `EstimateSource` (see `docs/BeverageDataSources.md`).
-  - `GeneratedBrandTable.swift` — AUTO-GENERATED 161-brand table (do not hand-edit).
+  - `GeneratedBrandTable.swift` — AUTO-GENERATED 655-brand table (do not hand-edit; re-run
+    `Tooling/generate_brand_table.sh` after editing `beverages.json`, or the table silently goes stale).
+  - `BrandCatalog.swift` — `KnownBeverage` + `BrandCatalog.all`: the public, de-duped, alphabetical
+    projection of the generated table, so `AppTarget` can build a brand picker without reaching into
+    the matcher's internals.
   - `TestDoubles.swift` — `FakeTextRecognizer`, `InMemoryPurchaseController` (actor), `NoopAdPresenter`.
 - **`Sources/CoreServices/`** ✅ — the pure pipeline + editable session:
   - `LineAssembler.swift` — `[TextObservation] → [String]`. **Column detection** (central-gutter
@@ -85,13 +90,26 @@ no SwiftUI/UIKit/Vision import.
   - `ValueRanker.swift` — the metric + sort (§7). `value(of:metric:)` is reused by the session.
   - `MenuPipeline.swift` — `[String] → MenuAnalysis` (one-shot) **and** `makeSession(lines:metric:)`
     for the interactive path; `analyze` routes through the session for parity.
-  - `DrinkResolver.swift` — the single enrichment path (`MenuItem` → enriched `EditableDrink` or
+  - `DriveResolver.swift` — **contains `DrinkResolver`** (filename typo, harmless). The single
+    enrichment path (`MenuItem` → enriched `EditableDrink` or
     excluded-NA), shared by pipeline and session so both agree.
   - `EditableDrink.swift` — identity-bearing (`id`), mutable view of an enriched drink; `price` still
     the one never-fabricated axis (§10), `pricedDrink` is `nil` until priced.
   - `MenuSession.swift` — holds one menu's `[EditableDrink]`; `rankedDrinks` mirrors `ValueRanker`
     ordering but preserves `id`; mutating `correctABV`/`correctSize`/`setPrice`/`addDrink`/`removeDrink`.
     Both invariants (§10, Change B) survive every edit.
+  - `ObservationFixture.swift` — serializes `[TextObservation]` into a paste-ready Swift literal plus
+    a readable dump, so a real on-device OCR export becomes a `LineAssembler` test fixture directly.
+  - `StoreComparison.swift` — **the store side (Goal 2)**, a separate type sharing only
+    `ValueRanker`'s ethanol formula: `StoreProduct` (unitVolume × count), `rank` → `[RankedProduct]`
+    with both standard-drinks-per-dollar and $/standard-drink, `ContainerSize.presets` for the picker,
+    and the shared `StoreValue` / `value(totalStandardDrinks:dollars:)` / `sortsBefore(...)` scoring
+    primitives that `StoreSession` also calls.
+  - `StoreSession.swift` — the interactive store calculator: `EditableProduct` (id, unit volume,
+    count, `Provenance<Double>` ABV, optional `Price`) + `StoreSession` with `rankedProducts` /
+    `needsPriceProducts` and pure add/price/ABV/package/remove edits. The store twin of `MenuSession`,
+    with the same two invariants: a priceless package can't rank (§10), and a brand-seeded ABV stays
+    flagged until corrected (§11).
 - **`Tests/CoreModelTests/`** ✅ — mirrors CoreModel 1:1 (§8).
 - **`Tests/CoreContractsTests/`** ✅ — `ContractsSmokeTests` (the doubles),
   `StaticBeverageKnowledgeTests` (chart hits, fallback flagging), `BrandTableTests` (brand
@@ -100,7 +118,12 @@ no SwiftUI/UIKit/Vision import.
   plus the capture/edit additions: `LineAssemblerTests` + `LineAssemblerColumnTests` (row + column
   assembly, no cross-column merge, single-column not split), `MenuParserHardeningTests` (name-cleanup,
   `drafts`/`cans`, end-to-end two-column "no chimera"), `DrinkResolverTests`, `MenuSessionTests`
-  (correction/add-price re-ranks; invariants hold), `MenuSessionManualEntryTests` (add/remove).
+  (correction/add-price re-ranks; invariants hold), `MenuSessionManualEntryTests` (add/remove);
+  plus the OCR-hardening set `LineAssemblerRealMenuTests` (real device coordinates),
+  `MenuParserSectionTests`, `MenuParserConfidenceTests` (rank-eligibility gate, price repair,
+  back-fill), `MenuParserMultiPriceTests`, `ObservationFixtureTests`; and the store side
+  `StoreComparisonTests`, `BrandCatalogTests`, `StoreSessionTests` (incl. ranking **parity** between
+  the session and the one-shot comparison).
 
 ### `Tooling/`
 
@@ -116,13 +139,22 @@ no SwiftUI/UIKit/Vision import.
 - **`App/`** — `BangForBuckApp` (entry) → `RootView` (`@AppStorage` 21+ gate → capture). `ContentView`
   / `SampleMenus` linger as a sample fallback; superseded by `RootView` + `CaptureHomeView`.
 - **`Features/AgeGate/AgeGateView.swift`** — informational 21+ confirmation, once (R3).
-- **`Features/Capture/`** — `CameraPicker` (`UIImagePickerController` wrapper; needs
-  `NSCameraUsageDescription`), `CaptureHomeView` (camera + `PhotosPicker` library + sample →
-  `viewModel.load(lines:)` → navigate to Results).
+- **`Features/Results/Capture/`** (nested under Results, not top-level as Architecture §3 sketches)
+  — `CameraPicker` (`UIImagePickerController` wrapper; `NSCameraUsageDescription` now set via
+  `INFOPLIST_KEY_…` in the project), `CaptureHomeView` (camera + `PhotosPicker` library + sample +
+  the Compare entry point → `viewModel.load(lines:)` → navigate to Results), `OCRDebugExportSheet`
+  (DEBUG-only, reached by long-pressing the logo).
 - **`Features/Results/`** — `ResultsViewModel` (thin `@MainActor` shell over `MenuSession`;
   `load(lines:)` is the OCR seam) and `ResultsView` (ranking with badges/chips, tap-to-edit sheet for
   price/ABV/size + remove, "Not sure about these" bucket with add-price/remove, "+" add-a-drink sheet,
   calculation explainer).
+- **`Features/Shared/ValueChips.swift`** — the shared ranked-row vocabulary: `SectionHeader`,
+  `RankMedal`, `MetaChip`, `ProvenanceChip`, `PricePill`, and the `ValueFormat` number formatters.
+  Both ranked lists render through these, so the menu and store screens can't drift visually.
+- **`Features/Compare/`** — `CompareViewModel` (thin `@MainActor` shell over `StoreSession`) and
+  `CompareView` (ranked shelf list, add-product form with the searchable brand picker off
+  `BrandCatalog.all` + `ContainerSize.presets` + custom-oz path, per-row edit sheet, "Waiting on a
+  price" bucket, store calculation explainer).
 - **`Infrastructure/VisionTextRecognizer.swift`** — `TextRecognizer` via `VNRecognizeTextRequest`
   (on-device), PNG → `CGImage` → `[TextObservation]` → `LineAssembler`. Holds the `CapturedImage(uiImage:)`
   bridge. The only impure code so far; RevenueCat purchases + ads land here in Week 2.

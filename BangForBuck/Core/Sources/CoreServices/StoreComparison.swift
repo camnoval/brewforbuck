@@ -61,27 +61,60 @@ public struct RankedProduct: Equatable, Sendable {
     }
 }
 
+/// The two numbers a shopper compares, computed once so the one-shot ranker and the interactive
+/// `StoreSession` can never disagree about what a package is worth.
+public struct StoreValue: Equatable, Sendable {
+    /// Standard drinks per dollar — the headline metric, higher is better.
+    public let standardDrinksPerDollar: Double
+    /// The shopper-friendly inverse. `.infinity` for a zero-alcohol package (never a divide-by-zero).
+    public let pricePerStandardDrink: Double
+
+    public init(standardDrinksPerDollar: Double, pricePerStandardDrink: Double) {
+        self.standardDrinksPerDollar = standardDrinksPerDollar
+        self.pricePerStandardDrink = pricePerStandardDrink
+    }
+}
+
 public struct StoreComparison {
     public init() {}
 
+    // MARK: - Shared scoring (one-shot ranker AND `StoreSession`)
+
+    /// Score one package. A product with zero standard drinks (0% ABV or 0 volume) scores 0 per
+    /// dollar and reports an infinite price-per-drink rather than dividing by zero.
+    public static func value(totalStandardDrinks: Double, dollars: Double) -> StoreValue {
+        StoreValue(
+            standardDrinksPerDollar: dollars > 0 ? totalStandardDrinks / dollars : 0,
+            pricePerStandardDrink: totalStandardDrinks > 0 ? dollars / totalStandardDrinks : Double.infinity
+        )
+    }
+
+    /// The one ordering rule: best value first, ties broken by name so output is deterministic.
+    /// Both ranking paths call this, which is what makes the parity test meaningful.
+    static func sortsBefore(
+        lhsValue: Double, lhsName: String,
+        rhsValue: Double, rhsName: String
+    ) -> Bool {
+        if lhsValue != rhsValue { return lhsValue > rhsValue }
+        return lhsName < rhsName
+    }
+
     /// Rank best value first (most standard drinks per dollar). Ties break by name for determinism.
-    /// A product with zero standard drinks (0% ABV or 0 volume) sorts last and reports an infinite
-    /// price-per-drink rather than dividing by zero.
     public func rank(_ products: [StoreProduct]) -> [RankedProduct] {
-        let scored = products.map { product -> (product: StoreProduct, perDollar: Double, perDrink: Double) in
-            let standardDrinks = product.totalStandardDrinks
-            let dollars = product.packagePrice.dollars
-            let perDollar = dollars > 0 ? standardDrinks / dollars : 0
-            let perDrink = standardDrinks > 0 ? dollars / standardDrinks : Double.infinity
-            return (product: product, perDollar: perDollar, perDrink: perDrink)
+        let scored: [(product: StoreProduct, value: StoreValue)] = products.map { product in
+            (product: product,
+             value: Self.value(totalStandardDrinks: product.totalStandardDrinks,
+                               dollars: product.packagePrice.dollars))
         }
         let sorted = scored.sorted { a, b in
-            if a.perDollar != b.perDollar { return a.perDollar > b.perDollar }
-            return a.product.name < b.product.name
+            Self.sortsBefore(lhsValue: a.value.standardDrinksPerDollar, lhsName: a.product.name,
+                             rhsValue: b.value.standardDrinksPerDollar, rhsName: b.product.name)
         }
         return sorted.enumerated().map { index, s in
-            RankedProduct(product: s.product, standardDrinksPerDollar: s.perDollar,
-                          pricePerStandardDrink: s.perDrink, rank: index + 1)
+            RankedProduct(product: s.product,
+                          standardDrinksPerDollar: s.value.standardDrinksPerDollar,
+                          pricePerStandardDrink: s.value.pricePerStandardDrink,
+                          rank: index + 1)
         }
     }
 }
@@ -89,10 +122,14 @@ public struct StoreComparison {
 /// Common container sizes for the store-calculator pickers (UI convenience — not domain defaults, so
 /// it lives here in the store feature rather than on `Volume`). Labels are what a shopper reads off a
 /// shelf tag; values are exact.
-public struct ContainerSize: Equatable, Sendable {
+public struct ContainerSize: Equatable, Hashable, Sendable, Identifiable {
     public let label: String
     public let volume: Volume
     public init(label: String, volume: Volume) { self.label = label; self.volume = volume }
+
+    /// `Hashable`/`Identifiable` so a SwiftUI `Picker` can select one and a `ForEach` can list them
+    /// without the app declaring a retroactive conformance on a Core type.
+    public var id: String { label }
 
     /// Cans / bottles by fluid ounce.
     public static let can12 = ContainerSize(label: "12 oz", volume: Volume(fluidOunces: 12))

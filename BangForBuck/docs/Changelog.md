@@ -3,6 +3,59 @@
 *Append-only history (§2). Newest on top. The Handoff is the live "where we are"; this is
 the log — don't let them merge.*
 
+## 2026-09-05 · Store calculator (Goal 2) + brand table regenerated
+- **`StoreSession` (new, pure CoreServices):** the interactive store calculator — `EditableProduct`
+  (unit volume × count, `Provenance<Double>` ABV, optional `Price`) and a session with
+  `rankedProducts`, `needsPriceProducts`, and pure edits. Same shape as `EditableDrink`/`MenuSession`
+  so both invariants hold identically on the store side: a priceless package can't rank (§10), and a
+  brand-seeded ABV stays flagged `.estimated` until the shopper types the real one (§11).
+- **`StoreComparison` scoring extracted** into `StoreValue` + `value(totalStandardDrinks:dollars:)`
+  + `sortsBefore(...)`, shared by the one-shot `rank` and the session so the two ranking paths can't
+  disagree; a parity test pins it. `ContainerSize` is now `Hashable`/`Identifiable`. No behaviour
+  change to existing `StoreComparison` output.
+- **`Features/Compare/`:** `CompareViewModel` + `CompareView` — ranked shelf list, add-product form
+  with a searchable 655-brand picker (`BrandCatalog.all`), `ContainerSize.presets` plus a custom-oz
+  path, count stepper, per-row edit sheet, "Waiting on a price" bucket, calculation explainer.
+  Reached from a "Compare store prices" button on `CaptureHomeView`.
+- **`Features/Shared/ValueChips.swift`:** `SectionHeader`/`RankMedal`/`MetaChip`/`ProvenanceChip`/
+  `PricePill` lifted out of `ResultsView` (they were `private`) so both ranked lists share one visual
+  vocabulary, plus a `ValueFormat` namespace. Fixes the size chip rounding a 1.5 oz shot to "2 oz".
+- **Brand table regenerated:** `beverages.json` had grown to 655 valid brands but
+  `GeneratedBrandTable.swift` was still the stale 161-brand build, so the brand tier was missing ~494
+  products. All eight brand ABVs pinned by `BrandTableTests` verified unchanged at 655.
+- **`INFOPLIST_KEY_NSCameraUsageDescription` added** to both build configs — it was missing entirely,
+  so the camera picker would have trapped on presentation.
+- Tests: `StoreSessionTests` (12 cases). *Not yet compiled — written without a Swift toolchain.*
+
+## 2026-08-30 → 2026-09-02 · OCR/parse hardening against five real menus (consolidated)
+*Backfilled from the Handoff, which had been carrying this history directly (§2 says it shouldn't).
+See the Handoff's dated parts 3–9 for the full reasoning on each change.*
+- **Word-level OCR boxes (part 3):** Vision returns one observation per *physical row*, fusing
+  columns; `VisionTextRecognizer` now emits one per **word**, restoring the inter-column gutter.
+  Plus dotted section totals, singular section headers, `/` separators, and N/A exclusion.
+- **Gutter detector rebuilt (part 4):** real word-level dumps from all five menus exported on device;
+  `bestVerticalSplit` gained a two-tier design — coverage corridors first, then per-row gap voting
+  for a gutter bridged by centred text (the Reservoir's `BEER` title). `pureNumber` tolerates `$`→`S`.
+- **Food/URL dropped, cocktail math audited (part 6):** food-section drop regions + a drink-safe dish
+  gazetteer, `looksLikeURL`, a casing-independent `isRankableName` rank-eligibility gate, and pure
+  section labels treated as headers even when priced. Embeddings/ML evaluated and **declined** —
+  the gazetteer plus structural signals already handle identity offline.
+- **Horizontal section banding (part 7):** `layoutBlocks` alternates axes — peel a horizontal section
+  band, then cut vertical gutters within it — so a dense multi-section menu stops slicing bottle
+  prices into a pseudo-column. Validated in Python against a full M/G transcription; all seven
+  existing column fixtures unchanged.
+- **Superscript-cent prices + shared grids (parts 8–9):** first-`$`-anchored price reading with
+  4-digit dollars-and-cents interpretation (`1025`→$10.25), `$1s`→`$15` digit repair, nameless
+  size/price grids adopting their smallest price as a section price, and a back-fill vs
+  forward-inherit split so a cocktail's own price line doesn't leak onto the next cocktail's name.
+  `gloss`/`pitchor` added as vessel-word misreads.
+- Net: all five test menus parse acceptably; IPAs rank ~0.26/0.21 std-drinks/$. Known residuals
+  (fully OCR-shredded price tokens, one happy-hour mini-grid with a typo'd size) accepted as low
+  value. Tests: `LineAssemblerRealMenuTests`, `MenuParserConfidenceTests`, `MenuParserMultiPriceTests`.
+- Also in this window: recursive X-Y cut for 1–4 columns, multi-price rows → one ranked drink per
+  size, the pure `StoreComparison`/`BrandCatalog` store core, and the DEBUG OCR-export affordance
+  (`ObservationFixture` + long-press on the logo).
+
 ## 2026-08-27 · R1 hardening + results clarity + manual add/remove
 - **Two-column menus (R1):** real on-device scan of a two-column bar menu (Southside Braintree) fused
   a left-column draft with a right-column bottle into one line. `LineAssembler` now detects columns

@@ -18,9 +18,22 @@
 		6EF9F3FA303E504800577118 /* BangForBuck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BangForBuck.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		6EEF7CCE304CA41A0022F306 /* Exceptions for "BangForBuck" folder in "BangForBuck" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 6EF9F3F9303E504800577118 /* BangForBuck */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		6EF9F3FC303E504800577118 /* BangForBuck */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				6EEF7CCE304CA41A0022F306 /* Exceptions for "BangForBuck" folder in "BangForBuck" target */,
+			);
 			path = BangForBuck;
 			sourceTree = "<group>";
 		};
@@ -276,7 +289,9 @@
 				DEVELOPMENT_TEAM = 9VZ2M528HD;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BangForBuck/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.food-and-drink";
+				INFOPLIST_KEY_NSCameraUsageDescription = "ABV uses your camera to scan the menu and products to determine their pricing";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -311,7 +326,9 @@
 				DEVELOPMENT_TEAM = 9VZ2M528HD;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BangForBuck/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.food-and-drink";
+				INFOPLIST_KEY_NSCameraUsageDescription = "ABV uses your camera to scan the menu and products to determine their pricing";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

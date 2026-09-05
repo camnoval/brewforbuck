@@ -151,23 +151,10 @@ struct ResultsView: View {
     }
 }
 
-// MARK: - Section header
-
-private struct SectionHeader: View {
-    let title: String
-    let systemImage: String
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: systemImage).font(.caption2)
-            Text(title)
-        }
-        .font(.footnote.weight(.semibold))
-        .foregroundStyle(.secondary)
-        .textCase(nil)
-    }
-}
-
 // MARK: - Ranked row
+//
+// `SectionHeader`, `RankMedal`, `MetaChip`, `ProvenanceChip` and `PricePill` now live in
+// `Features/Shared/ValueChips.swift` — the store calculator renders the same metric and reuses them.
 
 private struct RankRow: View {
     let item: RankedEditable
@@ -185,8 +172,8 @@ private struct RankRow: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 6) {
-                    MetaChip(text: String(format: "%.1f%% ABV", drink.abv.value))
-                    MetaChip(text: String(format: "%.0f oz", drink.size.value.fluidOunces))
+                    MetaChip(text: ValueFormat.abv(drink.abv.value))
+                    MetaChip(text: ValueFormat.ounces(drink.size.value.fluidOunces))
                     ProvenanceChip(isEstimated: drink.hasEstimate)
                 }
 
@@ -213,7 +200,7 @@ private struct RankRow: View {
                     .monospacedDigit()
                     .foregroundStyle(Color.accentColor)
                 if let price = drink.price {
-                    PricePill(dollars: price.dollars)
+                    PricePill(dollars: price.dollars, caption: "menu price")
                 }
             }
         }
@@ -234,69 +221,6 @@ private struct RankRow: View {
 }
 
 // MARK: - Small components
-
-private struct RankMedal: View {
-    let rank: Int
-
-    private var fill: Color {
-        switch rank {
-        case 1: return Color(red: 0.85, green: 0.65, blue: 0.13)   // gold
-        case 2: return Color(white: 0.62)                          // silver
-        case 3: return Color(red: 0.72, green: 0.45, blue: 0.20)   // bronze
-        default: return Color.secondary.opacity(0.22)
-        }
-    }
-    private var textColor: Color { rank <= 3 ? .white : .secondary }
-
-    var body: some View {
-        Text("\(rank)")
-            .font(.subheadline.weight(.bold))
-            .monospacedDigit()
-            .foregroundStyle(textColor)
-            .frame(width: 30, height: 30)
-            .background(fill, in: Circle())
-    }
-}
-
-private struct MetaChip: View {
-    let text: String
-    var body: some View {
-        Text(text)
-            .font(.caption2.weight(.medium))
-            .monospacedDigit()
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Color.secondary.opacity(0.14), in: Capsule())
-            .foregroundStyle(.secondary)
-    }
-}
-
-private struct ProvenanceChip: View {
-    let isEstimated: Bool
-    private var color: Color { isEstimated ? .orange : .green }
-    var body: some View {
-        Text(isEstimated ? "estimated" : "from menu")
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(color.opacity(0.16), in: Capsule())
-            .foregroundStyle(color)
-    }
-}
-
-private struct PricePill: View {
-    let dollars: Double
-    var body: some View {
-        VStack(alignment: .trailing, spacing: 0) {
-            Text(String(format: "$%.2f", dollars))
-                .font(.subheadline.weight(.semibold))
-                .monospacedDigit()
-            Text("menu price")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-    }
-}
 
 private struct EmptyRankState: View {
     let onAdd: () -> Void

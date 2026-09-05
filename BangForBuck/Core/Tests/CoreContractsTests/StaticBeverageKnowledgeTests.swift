@@ -31,8 +31,14 @@ final class StaticBeverageKnowledgeTests: XCTestCase {
     }
 
     func testSectionRefinesCategoryButChartKeepsABV() {
-        // "IPA" in a BOTTLES section: chart ABV (6.5) wins, section sets category/size (bottled, 12 oz).
-        let p = bk.profile(for: "Community Mosaic IPA", sectionCategory: .bottledBeer)
+        // A *generic* IPA in a BOTTLES section: chart ABV (6.5) wins, section sets category/size
+        // (bottled, 12 oz). The name here must not exist in `beverages.json` — a real brand would
+        // legitimately be matched by the brand tier first, which is a different behaviour. Asserting
+        // the source below makes that failure mode obvious instead of looking like a wrong ABV.
+        let p = bk.profile(for: "Nonesuch Placeholder IPA", sectionCategory: .bottledBeer)
+        guard case .styleChart = p.source else {
+            return XCTFail("expected the style-chart tier, got \(p.source) — has this name been added to beverages.json?")
+        }
         XCTAssertEqual(p.typicalABV, 6.5)
         XCTAssertEqual(p.category, .bottledBeer)
         XCTAssertEqual(p.typicalSize, Volume(fluidOunces: 12))

@@ -52,6 +52,12 @@ still directionally useful.
 v1. *Trigger:* defer entirely if the window tightens (it's on the cut-first list).
 
 ## R5 — the five-week window incl. review · **Schedule**
+**Progress (2026-09-05) — this is now the live risk.** The value engine, capture flow, editable
+results, and the store calculator are all in; **monetization is not started at all** (no RevenueCat
+conformer, no `remove_ads` product wired, no Paywall screen). RevenueCat integration is a Shipaton
+*qualification* requirement, not a feature, and the IAP has to clear review alongside the build
+against a ~Sep 18–20 submission target. *Trigger fires now:* stop adding features and do §A.
+
 **Threatens:** shipping inside the Aug 1 – Sep 30 window at all.
 **Counter-case:** the pure pipeline proves the value with zero UI, so the risky UI/review
 work sits on a proven base.

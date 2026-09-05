@@ -27,6 +27,8 @@ struct CaptureHomeView: View {
     @State private var showCamera = false
     @State private var isProcessing = false
     @State private var showResults = false
+    /// The store calculator — a second way in that needs no photo at all (typed prices only).
+    @State private var showCompare = false
     @State private var errorMessage: String?
 
     // Debug OCR export: keep the last scanned image so its raw observations can be dumped to a
@@ -74,6 +76,16 @@ struct CaptureHomeView: View {
                     .controlSize(.large)
                     .disabled(isProcessing)
 
+                    Button {
+                        showCompare = true
+                    } label: {
+                        Label("Compare store prices", systemImage: "cart")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .disabled(isProcessing)
+
                     Menu {
                         ForEach(SampleMenus.all.indices, id: \.self) { index in
                             Button(SampleMenus.all[index].name) { loadSample(index) }
@@ -96,6 +108,9 @@ struct CaptureHomeView: View {
             .navigationTitle("Bang-for-Buck")
             .navigationDestination(isPresented: $showResults) {
                 ResultsView(viewModel: viewModel).navigationTitle("Results")
+            }
+            .navigationDestination(isPresented: $showCompare) {
+                CompareView()
             }
             .sheet(isPresented: $showCamera) {
                 CameraPicker { image in process(image) }
