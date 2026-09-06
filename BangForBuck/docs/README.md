@@ -35,6 +35,7 @@ iOS 16+). Monetization (RevenueCat) is the Week 2 step.
 | A file-by-file map of the code | [`CodebaseReference.md`](./CodebaseReference.md) |
 | The current directory tree (auto-generated) | [`ProjectStructure.md`](./ProjectStructure.md) |
 | Current state + what to do next | [`Handoff.md`](./Handoff.md) |
+| The plan for the menu-reading test pass | [`MenuTestingPlan.md`](./MenuTestingPlan.md) |
 | The assumptions that could break it | [`Risks.md`](./Risks.md) |
 | Where the ABV/size numbers come from | [`BeverageDataSources.md`](./BeverageDataSources.md) |
 | A non-technical overview | [`PlainLanguageGuide.md`](./PlainLanguageGuide.md) |
