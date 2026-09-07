@@ -48,7 +48,10 @@ struct CaptureHomeView: View {
                 Wordmark(size: 40)
                     .modifier(DebugOCRExportGesture(action: exportLastScan))
 
-                Text("How much drink do you get for your money?")
+                // Says what the app does, in the user's terms. Deliberately not a question (the
+                // person opened the app already) and deliberately avoids the word "value", which
+                // the wordmark directly above has just said twice.
+                Text("Compare the amount of standard drinks per dollar")
                     .font(Theme.callout)
                     .foregroundStyle(Theme.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)

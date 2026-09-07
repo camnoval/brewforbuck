@@ -99,9 +99,9 @@ private extension UIColor {
 
 // MARK: - Brand
 
-/// The wordmark. `ABV` is an acronym, so it is set in caps on purpose; the expansion underneath is
-/// the product promise in sentence case, and it is what makes the pun land rather than just reading
-/// as a chemistry abbreviation.
+/// The wordmark. `ABV` is an acronym, so it is set in caps on purpose, and the expansion underneath
+/// takes title case because it is the product's actual name rather than a description of it. That
+/// line is what makes the pun land instead of the mark just reading as a chemistry abbreviation.
 struct Wordmark: View {
     var size: CGFloat = 40
     var showsExpansion = true
@@ -113,7 +113,7 @@ struct Wordmark: View {
                 .tracking(-size * 0.015)
                 .foregroundStyle(Theme.ink)
             if showsExpansion {
-                Text("A better value")
+                Text("A Better Value")
                     .font(.system(size: max(12, size * 0.3), weight: .medium, design: .rounded))
                     .foregroundStyle(Theme.glass)
             }
