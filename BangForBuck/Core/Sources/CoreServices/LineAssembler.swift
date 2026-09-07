@@ -161,6 +161,16 @@ public enum LineAssembler {
         guard group.count >= minGroupToSplit else { return nil }
         if let split = corridorSplit(group) ?? centralSplit(group) { return split }
         for gutterX in rankedGutters(group) {
+            // A gutter is a blank channel most rows RESPECT. Voting only counts the
+            // rows that agree, so on a centred single-column menu that happens to
+            // contain a couple of genuinely two-column blocks (Rullo's: the wine
+            // grid and "Back to Basics"), those blocks can out-vote nothing at all
+            // and cut the WHOLE page — slicing every centred line in half. Rows
+            // that run through the candidate are evidence against it, so count them
+            // too and reject when they win. Tiers 1 and 2 need no such check: a
+            // coverage corridor is empty by construction, so nothing can cross it.
+            let (voters, crossers) = gutterSupport(group, at: gutterX)
+            if crossers > voters { continue }
             if let split = guardedSplit(group, at: gutterX) { return split }
         }
         return nil
@@ -198,6 +208,46 @@ public enum LineAssembler {
         }
         clusters.sort { a, b in a.count != b.count ? a.count > b.count : a.width > b.width }
         return clusters.map { $0.x }
+    }
+
+    /// How many rows support a candidate gutter versus how many run through it.
+    ///
+    /// A row **votes** when it has a blank gap of at least `minGutterGap` straddling
+    /// `gutterX`. A row **crosses** when it has no such gap there but still occupies
+    /// both sides — either one box spans the position outright, or it has boxes to
+    /// the left and to the right with continuous text between them. A row wholly on
+    /// one side is silent and counts as neither: a short left-column item is not
+    /// evidence against its own block's gutter.
+    ///
+    /// Needs no new tuning constant; the decision is a comparison of the two counts.
+    static func gutterSupport(
+        _ group: [TextObservation],
+        at gutterX: Double
+    ) -> (voters: Int, crossers: Int) {
+        var voters = 0
+        var crossers = 0
+        for row in rows(of: group) {
+            let ordered = row.sorted { $0.box.minX < $1.box.minX }
+
+            var votes = false
+            for i in 0..<max(0, ordered.count - 1) {
+                let left = ordered[i].box.maxX
+                let right = ordered[i + 1].box.minX
+                if left <= gutterX, gutterX <= right, right - left >= minGutterGap {
+                    votes = true
+                    break
+                }
+            }
+            if votes { voters += 1; continue }
+
+            let spans = ordered.contains(where: {
+                $0.box.minX < gutterX && gutterX < $0.box.maxX
+            })
+            let hasLeft = ordered.contains(where: { $0.box.maxX <= gutterX })
+            let hasRight = ordered.contains(where: { $0.box.minX >= gutterX })
+            if spans || (hasLeft && hasRight) { crossers += 1 }
+        }
+        return (voters, crossers)
     }
 
     /// Group observations into visual rows by vertical position — same banding the row assembler
@@ -352,11 +402,127 @@ public enum LineAssembler {
         }
         if !current.isEmpty { rows.append(current) }
 
-        return rows.map { row in
-            row.sorted { $0.box.minX < $1.box.minX }        // left to right within the row
-               .map { trimmed($0.text) }
-               .joined(separator: " ")
+        return rows.flatMap { row in
+            let ordered = row.sorted { $0.box.minX < $1.box.minX }   // left to right
+            return splitAtPriceToNameBoundaries(ordered).map { segment in
+                segment.map { trimmed($0.text) }.joined(separator: " ")
+            }
         }
+    }
+
+    // MARK: - Price → name boundaries within one row
+
+    /// A price token followed by a *word* means two columns' items were glued into
+    /// one row: a menu row reads "name … price", so once the price has been printed
+    /// the item is finished and a following name belongs to a different item. Splits
+    /// `MAKER'S MARK 2 OZ. POUR 10 RITTENHOUSE RYE 2 OZ. POUR 8` and
+    /// `Red | $11/ $40 White | $12 / $44` into their two real items.
+    ///
+    /// Two conditions keep it off ordinary names, both necessary:
+    ///
+    ///  - **a name must already precede the price**, so a leading price (a
+    ///    right-aligned price OCR'd before its name) is never a boundary; and
+    ///  - **the blank gap at the boundary must be `priceNameGapMultiple ×` the
+    ///    row's own median inter-word gap.** Numerals inside names are common
+    ///    ("MERLOT, 14 HANDS", "Racer 5 IPA", "glenmorangie 10 year",
+    ///    "aged 6 weeks") and they sit at ordinary word spacing, ratio ≈ 1. Real
+    ///    column boundaries measured 11.9–27.1 across the real OCR dumps, so the
+    ///    two populations are cleanly separated and any multiple from ~2 to ~11
+    ///    gives identical output. Being relative to the row's own spacing makes it
+    ///    independent of font size, crop and aspect ratio.
+    static let priceNameGapMultiple = 4.0
+
+    /// Words that describe a **serving**, not a new item. A price followed by one of
+    /// these is still the same drink priced at another size — `glass $13 pitcher $45`
+    /// is one cocktail, and `MenuParser`'s multi-price split needs it on one line.
+    /// A price followed by anything *else* is a different drink.
+    ///
+    /// This is the load-bearing half of the rule. The gap multiple alone is not
+    /// enough: on the real M/G coordinates `$13 → pitcher` measures ratio 4.97 and
+    /// `$14 → bottle` measures below 4, so a purely geometric test both splits a
+    /// size grid and treats two identical layouts differently. The vocabulary is
+    /// what actually separates "another size of this drink" from "the next drink".
+    static let servingWords: Set<String> = [
+        "glass", "glasses", "pitcher", "pitchers", "bottle", "bottles",
+        "can", "cans", "oz", "ozs", "ounce", "ounces", "pint", "pints",
+        "split", "splits", "carafe", "half", "quart", "liter", "litre",
+        "mug", "stein", "growler", "flight", "shot", "shots", "double",
+        "single", "draft", "drafts", "draught", "each", "ea", "per",
+        "cup", "cups", "goblet", "magnum", "taster", "sample", "pour", "pours",
+    ]
+
+    static func isServingWord(_ text: String) -> Bool {
+        let trim: Set<Character> = ["$", ".", ",", "%", "|", "•", "(", ")", "/", "-"]
+        var chars = Array(text)
+        var start = 0
+        var end = chars.count
+        while start < end, trim.contains(chars[start]) { start += 1 }
+        while end > start, trim.contains(chars[end - 1]) { end -= 1 }
+        chars = Array(chars[start..<end])
+        return servingWords.contains(String(chars).lowercased())
+    }
+
+    static func splitAtPriceToNameBoundaries(
+        _ ordered: [TextObservation]
+    ) -> [[TextObservation]] {
+        guard ordered.count >= 2 else { return [ordered] }
+
+        var gaps: [Double] = []
+        for i in 0..<(ordered.count - 1) {
+            gaps.append(ordered[i + 1].box.minX - ordered[i].box.maxX)
+        }
+        let positive = gaps.filter { $0 > 0 }
+        let medianGap = max(positive.isEmpty ? 0 : median(positive), 0.0005)
+
+        var cuts: [Int] = []
+        for i in 0..<(ordered.count - 1) {
+            guard isPriceLike(ordered[i].text), hasLetter(ordered[i + 1].text) else { continue }
+            guard ordered[0...i].contains(where: { hasLetter($0.text) }) else { continue }
+            guard !isServingWord(ordered[i + 1].text) else { continue }
+            guard gaps[i] >= priceNameGapMultiple * medianGap else { continue }
+            cuts.append(i + 1)
+        }
+        guard !cuts.isEmpty else { return [ordered] }
+
+        var segments: [[TextObservation]] = []
+        var start = 0
+        for cut in cuts + [ordered.count] {
+            let segment = Array(ordered[start..<cut])
+            if !segment.isEmpty { segments.append(segment) }
+            start = cut
+        }
+        return segments
+    }
+
+    /// A bare number, with currency/punctuation trimmed from the ENDS only: `8`,
+    /// `$12`, `4.25`, `$40`, `$11/`, `(4.8%)`. Deliberately not `1/2` — an interior
+    /// slash is text ("Try a beach bum - 1/2 Mango Cart"), so trimming happens at
+    /// the edges and the remainder must be digits with at most one decimal mark.
+    static func isPriceLike(_ text: String) -> Bool {
+        let trim: Set<Character> = ["$", ".", ",", "%", "|", "•", "(", ")", "/"]
+        var chars = Array(text)
+        var start = 0
+        var end = chars.count
+        while start < end, trim.contains(chars[start]) { start += 1 }
+        while end > start, trim.contains(chars[end - 1]) { end -= 1 }
+        chars = Array(chars[start..<end])
+        guard !chars.isEmpty else { return false }
+
+        var marks = 0
+        for c in chars {
+            if c.isNumber { continue }
+            if c == "." || c == "," {
+                marks += 1
+                if marks > 2 { return false }
+                continue
+            }
+            return false
+        }
+        return true
+    }
+
+    static func hasLetter(_ text: String) -> Bool {
+        text.contains { $0.isLetter }
     }
 
     // MARK: - Helpers (Foundation-free)

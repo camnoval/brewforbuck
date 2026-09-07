@@ -90,13 +90,48 @@ struct VisionTextRecognizer: TextRecognizer {
                         }
                     }
                     #if DEBUG
-                    // Diagnostic: dump exactly what Vision produced (and what LineAssembler makes of
-                    // it) to the Xcode console on every scan, so failures can be inspected without
-                    // any in-app gesture. Copy this block from the console.
+                    // Diagnostic: dump exactly what Vision produced, what LineAssembler makes of it,
+                    // and what MenuParser then does with each line, to the Xcode console on every
+                    // scan — so a failure can be triaged without any in-app gesture. Copy the block
+                    // between the markers.
+                    //
+                    // Three things here that the plain `export` didn't carry:
+                    //
+                    //  • **Image pixel dimensions.** Every coordinate below is normalized to the unit
+                    //    square, but `LineAssembler` mixes aspect-safe thresholds (row tolerance, a
+                    //    fraction of median text height) with absolute page fractions
+                    //    (`minGutterGap` 0.045 and `minColumnSpan` 0.18 of width, `minSectionGap`
+                    //    0.03 of height). Those absolute ones mean different physical distances on a
+                    //    tall phone photo than on a wide scan, so the aspect ratio is required to
+                    //    reason about a gutter or banding failure at all.
+                    //  • **Per-line confidence**, which separates "Vision misread the text" from
+                    //    "Vision read it correctly and a parser rule broke it" — the difference
+                    //    between an input-quality fix and a rule fix.
+                    //  • **The Vision line count vs the word count**, plus the line candidates
+                    //    themselves, which show how Vision grouped text *before* the per-word split.
+                    //    That's what makes a fused two-column row diagnosable.
+                    //
+                    // The paste-ready Swift literal is deliberately *not* printed: it roughly doubles
+                    // the log size and is reconstructible from the dump below. It's still on the
+                    // share sheet via `ObservationFixture.export`, so a menu worth a permanent
+                    // fixture can be captured exactly with the long-press.
+                    let assembled = LineAssembler.lines(from: observations)
+                    var candidates = "# Vision line candidates (confidence, text):\n"
+                    for result in results {
+                        if let candidate = result.topCandidates(1).first {
+                            candidates += "  \(String(format: "%.2f", candidate.confidence))  \(candidate.string)\n"
+                        }
+                    }
+                    let aspect = Double(cgImage.width) / Double(cgImage.height)
                     print("""
 
                     ===== BANGFORBUCK OCR EXPORT (start) =====
-                    \(ObservationFixture.export(observations))
+                    # image \(cgImage.width)x\(cgImage.height) px (aspect \(String(format: "%.3f", aspect)))
+                    # \(results.count) Vision lines -> \(observations.count) word observations
+
+                    \(candidates)
+                    \(ObservationFixture.debugDump(observations))
+                    \(ObservationFixture.parseDump(assembled))
                     ===== BANGFORBUCK OCR EXPORT (end) =====
 
                     """)

@@ -49,6 +49,29 @@ public enum ObservationFixture {
         swiftLiteral(observations, name: name) + "\n" + debugDump(observations)
     }
 
+    /// Per-line verdict for every assembled line: which `MenuParser` gate consumed it, and for
+    /// surviving items the parsed name, price (and whether it was inherited), category and any read
+    /// ABV/size. This is the half of the pipeline `debugDump` can't show — `parse` discards lines at
+    /// eight separate gates, so on the console a dropped drink is indistinguishable from an OCR
+    /// miss, and a drink sitting in "Not sure about these" doesn't say whether the price was never
+    /// found or was found and then suppressed by the rank-eligibility gate.
+    ///
+    /// Lives here rather than in the app so it stays pure and in the same module as the parser's
+    /// internal gates. Diagnostic only; nothing in the shipping path calls it.
+    public static func parseDump(_ lines: [String]) -> String {
+        var log: [String] = []
+        let items = MenuParser().parse(lines) { log.append($0) }
+
+        var out = "# MenuParser trace (\(lines.count) lines in):\n"
+        for entry in log { out += "  \(entry)\n" }
+
+        let priced = items.filter { $0.price != nil }
+        let needsPrice = items.filter { $0.price == nil }
+        out += "\n# \(items.count) items out: \(priced.count) priced, \(needsPrice.count) needsPrice\n"
+        for item in needsPrice { out += "  NEEDS-PRICE  \(item.name)\n" }
+        return out
+    }
+
     // MARK: - Foundation-free helpers
 
     /// Round to 4 decimals and trim trailing zeros: `0.05`, `0.8`, `0.3266`, `1`.

@@ -12,7 +12,12 @@ import CoreModel
 public struct MenuParser {
     public init() {}
 
-    public func parse(_ lines: [String]) -> [MenuItem] {
+    /// `trace`, when non-nil, reports which gate consumed each line — the half of the pipeline the
+    /// OCR dump can't show, since this loop discards lines at eight different points and a drop is
+    /// otherwise indistinguishable from an OCR miss. Emitted from inside the real loop rather than a
+    /// reimplementation of it, so it can't drift from what actually happened. Default nil leaves the
+    /// shipping path behaviourally identical and allocation-free.
+    public func parse(_ lines: [String], trace: ((String) -> Void)? = nil) -> [MenuItem] {
         var items: [MenuItem] = []
         var category: BeverageCategory = .unknown
         var headerPrice: Price? = nil
@@ -28,9 +33,13 @@ public struct MenuParser {
 
             // Food is dropped entirely (not even shown for review): a food-section header starts a
             // drop region; any drink-section header ends it.
-            if Self.isFoodSectionHeader(line) { inFoodSection = true; backfillIndex = nil; continue }
+            if Self.isFoodSectionHeader(line) {
+                trace?("DROP  food-section-header      | \(line)")
+                inFoodSection = true; backfillIndex = nil; continue
+            }
 
             if let (cat, hp) = Self.sectionHeader(line) {
+                trace?("SECT  cat=\(cat.rawValue) headerPrice=\(hp.map { "$\($0.dollars)" } ?? "-") | \(line)")
                 inFoodSection = false
                 // A pure wine sub-label ("whites"/"reds"/"bubbles") groups within the Wine section
                 // rather than starting a new one, so it must NOT reset the shared "glass $14 | bottle
@@ -45,7 +54,20 @@ public struct MenuParser {
 
             // Drop food dishes (in a food section, or a stray dish line) and URLs/emails outright —
             // these are never drinks, so they don't belong in the ranking or the "Not sure" bucket.
-            if inFoodSection || Self.looksLikeFood(line) || Self.looksLikeURL(line) { continue }
+            // Split into three checks purely so the trace can name which one fired; the condition is
+            // the same as the original `inFoodSection || looksLikeFood || looksLikeURL`.
+            if inFoodSection {
+                trace?("DROP  inside-food-section      | \(line)")
+                continue
+            }
+            if Self.looksLikeFood(line) {
+                trace?("DROP  looks-like-food          | \(line)")
+                continue
+            }
+            if Self.looksLikeURL(line) {
+                trace?("DROP  looks-like-url           | \(line)")
+                continue
+            }
 
             // Non-alcoholic markers on the raw line (N/A, "non-alcoholic", "zero proof") force the
             // category so a brand/style match downstream can't rank e.g. "Gruvi IPA N/A beer" as a
@@ -61,9 +83,11 @@ public struct MenuParser {
             // The grid line itself is always dropped.
             if let gridPrice = Self.barePriceGridSmallest(line) {
                 if let bi = backfillIndex, items[bi].price == nil {
+                    trace?("GRID  backfill $\(gridPrice.dollars) onto \"\(items[bi].name)\" | \(line)")
                     items[bi] = items[bi].withPrice(gridPrice)
                     backfillIndex = nil
                 } else {
+                    trace?("GRID  forward headerPrice=$\(gridPrice.dollars) | \(line)")
                     headerPrice = gridPrice
                 }
                 continue
@@ -74,6 +98,14 @@ public struct MenuParser {
             // carries its own price, so none fall through to the needsPrice path below.
             let multi = Self.splitMultiPrice(line)
             if !multi.isEmpty {
+                // Mirrors the per-entry rank-eligibility suppression applied in the loop below, so
+                // the trace shows the price actually stored rather than the one detected.
+                trace?("MULTI \(multi.count) entries: "
+                    + multi.map { entry in
+                        let kept = Self.isRankableName(entry.name)
+                        return "\"\(entry.name)\"@" + (kept ? "$\(entry.price.dollars)" : "nil(not-rankable)")
+                    }.joined(separator: " / ")
+                    + " | \(line)")
                 let abv = Self.detectABV(line)   // ABV is usually printed once for the whole line
                 for entry in multi {
                     items.append(MenuItem(
@@ -91,15 +123,27 @@ public struct MenuParser {
             let price = parsed.price ?? headerPrice
 
             if parsed.price == nil && headerPrice == nil && Self.looksLikeDescription(line) && !items.isEmpty {
+                trace?("DESC  attached to \"\(items[items.count - 1].name)\" | \(line)")
                 items[items.count - 1] = items[items.count - 1].addingDescription(line)
                 continue
             }
 
-            guard !parsed.name.isEmpty else { continue }
+            guard !parsed.name.isEmpty else {
+                trace?("DROP  empty-name-after-clean   | \(line)")
+                continue
+            }
             // A price only counts if the name looks like a real drink title; otherwise the line is a
             // recipe/promo/fragment and drops (price suppressed) into the visible needsPrice bucket.
             let rankable = Self.isRankableName(parsed.name)
             let priceIfConfident = rankable ? price : nil
+            trace?("ITEM  \(rankable ? "rankable    " : "NOT-RANKABLE")"
+                + " name=\"\(parsed.name)\""
+                + " price=\(priceIfConfident.map { "$\($0.dollars)" } ?? "nil")"
+                + (parsed.price == nil && price != nil ? "(inherited)" : "")
+                + " cat=\(itemCategory.rawValue)"
+                + " readABV=\(parsed.readABV.map { "\($0)%" } ?? "-")"
+                + " readSize=\(parsed.readSize.map { "\($0.fluidOunces)oz" } ?? "-")"
+                + " | \(line)")
             items.append(MenuItem(
                 name: parsed.name, price: priceIfConfident,
                 readABV: parsed.readABV, readSize: parsed.readSize,
