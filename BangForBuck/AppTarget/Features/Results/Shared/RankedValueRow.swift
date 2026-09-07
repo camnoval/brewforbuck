@@ -1,6 +1,6 @@
 //
 //  RankedValueRow.swift
-//  BangForBuck
+//  ABV
 //
 //  Created by Noval, Cameron on 9/5/26.
 //
@@ -38,7 +38,9 @@ struct RankedValueRow: View {
                     .font(.headline)
                     .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: 6) {
+                // Wraps rather than compresses, so the provenance badge is never abbreviated to
+                // "estimat…" just because the ABV carries a decimal point (see `ChipFlow`).
+                ChipFlow(spacing: 6, lineSpacing: 6) {
                     ForEach(Array(chips.enumerated()), id: \.offset) { _, chip in
                         MetaChip(text: chip)
                     }

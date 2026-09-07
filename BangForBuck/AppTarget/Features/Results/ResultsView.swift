@@ -171,7 +171,7 @@ private struct RankRow: View {
                     .font(.headline)
                     .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: 6) {
+                ChipFlow(spacing: 6, lineSpacing: 6) {
                     MetaChip(text: ValueFormat.abv(drink.abv.value))
                     MetaChip(text: ValueFormat.volume(drink.size.value.fluidOunces))
                     ProvenanceChip(isEstimated: drink.hasEstimate)

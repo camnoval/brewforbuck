@@ -163,17 +163,82 @@ public struct MenuParser {
         let parsed = parseItem(line)
         let hasPipe = contains(line, "|")
         let hasDotLeader = hasDotLeaderRun(line)   // "COCKTAILS........$13" — a dotted section total
+        let isPureLabel = isPureSectionLabel(line)
+
+        // D — a label made of nothing but section words, vessels, prices and filler is a header
+        // whatever price it carries, and its own **tokens** name the category. This is what makes
+        // `WHITES - $9 GLASS / $82 BOTTLE` a $9 Wine section instead of two ranked drinks called
+        // "WHITES (glass)" and "WHITES (bottle)".
+        if isPureLabel, let cat = pureLabelCategory(line) {
+            return (cat, parsed.price)
+        }
+
         // A priced line is an item, never a header — UNLESS a pipe ("Elixirs | $14"), dot leaders
         // ("COCKTAILS...$13"), or the line is nothing but a section label plus a price ("SHOTS 4",
         // "SHOTS $6 each") mark it as a section total whose items inherit the price.
-        if parsed.price != nil && !hasPipe && !hasDotLeader && !isPureSectionLabel(line) { return nil }
+        if parsed.price != nil && !hasPipe && !hasDotLeader && !isPureLabel { return nil }
         for (keywords, cat) in headerKeywords {
-            if keywords.contains(where: { contains(lower, $0) }) {
+            if let hit = keywords.first(where: { contains(lower, $0) }) {
+                // Containing a style word is not the same as being a section header (F). A recipe or
+                // a blurb that happens to say "sparkling" or "frozen" must not reset the category.
+                guard isPlausibleHeader(line, keyword: hit) else { return nil }
                 return (cat, parsed.price)   // header price (e.g. "Elixirs | $14") when present
             }
         }
         return nil
     }
+
+    /// Whether a line that matched a section keyword actually reads like a **header** rather than
+    /// prose or an item.
+    ///
+    /// The keyword match is a substring test, so any line mentioning a style matched: on menu 4
+    /// `sparkling water, honey` became a Wine header and re-categorized the four cocktails below it
+    /// as 12% wine; on menu 7 `coconut and 151, frozen and topped` put the whole beach-house list
+    /// under `frozenCocktail`. A header is a **label**, and a label differs from a sentence in three
+    /// ways that survive lowercasing (real bars lowercase their menus, so casing is deliberately not
+    /// a signal):
+    ///
+    ///  - **No comma and no bullet.** Both punctuate a list or a sentence. No real header on any of
+    ///    the eight menus carries either; every prose false positive that carries one is prose.
+    ///  - **No printed ABV.** A percentage is something an item states about itself. `Mighty Dry
+    ///    Cider (6%)` is a cider, not the Cider section.
+    ///  - **At most `maxHeaderModifiers` modifiers around the head noun.** `CRAFT BOTTLES`,
+    ///    `TALL BOY CANS`, `BIG BREWERY BOTTLES` and `house brews on tap` are labels with one or two
+    ///    qualifiers; `Rotating flavors of world class unfiltered ciders.` has five and is a
+    ///    sentence. Words of the matched keyword and of the section vocabulary are not modifiers, and
+    ///    neither are prices, sizes or filler, so a priced header keeps working.
+    ///
+    /// Measured across all eight OCR dumps and lowercased copies of them: 59 keyword matches become
+    /// 43, dropping 16 prose/item false positives on 7 of the 8 menus and **losing no real header**.
+    /// Four residuals still fire, all now harmless: `sparkling peach pear` (menu 4) reaches only one
+    /// item instead of four, and `3. Roget Sparkling Wine`, `Nutrl Vodka Seltzer 4.5ABV` and
+    /// `liquot Sparkling` land on the category they would have been given anyway.
+    static func isPlausibleHeader(_ line: String, keyword: String) -> Bool {
+        // A list or a sentence, never a label.
+        if contains(line, ",") || contains(line, "•") || contains(line, "·") { return false }
+        // A printed percentage belongs to an item.
+        if detectABV(line) != nil { return false }
+
+        let keywordWords = keyword.split(separator: " ").map { String($0).lowercased() }
+        var modifiers = 0
+        for token in replaceSeparators(line).split(separator: " ").map(String.init) {
+            let w = stripEdgePunctuation(token).lowercased()
+            if w.isEmpty || !w.contains(where: { $0.isLetter }) { continue }
+            if labelFillerWords.contains(w) || isMeasurementOrPrice(w) { continue }
+            if sectionWords.contains(w) || keywordWords.contains(w) { continue }
+            // An inflected or glued form of the keyword counts as the keyword, not as a modifier
+            // ("bottled" for "bottles"). Guarded to 4+ characters so a short keyword word ("on",
+            // from "on tap") can't match inside an unrelated name like "london".
+            if keywordWords.contains(where: { $0.count >= 4 && contains(w, $0) }) { continue }
+            modifiers += 1
+        }
+        return modifiers <= maxHeaderModifiers
+    }
+
+    /// How many qualifiers a section label may carry around its head noun. Two, because the real
+    /// headers in the corpus top out there (`BIG BREWERY BOTTLES`, `TALL BOY CANS`) while the
+    /// shortest prose false positive that survives every other test needs three.
+    static let maxHeaderModifiers = 2
 
     /// True if the line contains a run of 2+ consecutive '.' (dot leaders), as printed between a
     /// section name and its price: "COCKTAILS........$13". A single '.' (a decimal) doesn't count.
@@ -205,16 +270,62 @@ public struct MenuParser {
         (["specialty cocktails", "original cocktails", "signature cocktails", "cocktails", "elixirs", "back to basics", "hand-crafted", "hand crafted", "specialty", "signature"], .cocktail),
     ]
 
+    /// Token-exact section vocabulary → category, in the **same priority order** as
+    /// `headerKeywords`, so a multi-word label resolves the way it always has ("BOTTLES CANS" is
+    /// bottled beer, not seltzer).
+    ///
+    /// Token-exact is the whole point. `headerKeywords` matches by substring, which is fine for
+    /// "elixirs" but impossible for a wine colour: "red" and "white" appear inside `Fire Red Ale`,
+    /// `Allagash White`, `White Claw` and `Wente Mt. Diablo Red Blend`, so as substrings they would
+    /// turn half a beer list into wine sections. They live here and deliberately **not** in
+    /// `headerKeywords`.
+    ///
+    /// Vessel singulars are absent for the same reason in reverse: `bottle`, `can` and `glass` are
+    /// sizes, so `Bottle 25` and `Glass 12 Bottle 40` must stay size/price rows rather than opening a
+    /// Bottled Beer section priced at $25.
+    static let labelCategories: [([String], BeverageCategory)] = [
+        (["non-alcoholic", "mocktails"], .nonAlcoholic),
+        (["frozen"], .frozenCocktail),
+        (["draught", "drafts", "draft"], .draftBeer),
+        (["bottles", "imports", "import", "domestics", "domestic"], .bottledBeer),
+        (["seltzers", "seltzer", "cans"], .seltzer),
+        (["ciders", "cider"], .cider),
+        (["shots"], .shot),
+        (["martinis"], .martini),
+        (["sangria"], .sangria),
+        (["sparkling", "bubbles", "reds", "red", "whites", "white", "rosé", "rose",
+          "rosados", "wines", "wine"], .wineGlass),
+        (["cocktails", "cocktail", "elixirs", "specialty", "signature"], .cocktail),
+    ]
+
+    /// The category a pure section label names, from its own tokens. `nil` when the label carries no
+    /// category-bearing word — a bare vessel row like `Glass 12 Bottle 40`, which is a size grid.
+    static func pureLabelCategory(_ line: String) -> BeverageCategory? {
+        var tokens = Set<String>()
+        for token in replaceSeparators(line).split(separator: " ").map(String.init) {
+            tokens.insert(stripEdgePunctuation(token).lowercased())
+        }
+        for (words, cat) in labelCategories {
+            if words.contains(where: { tokens.contains($0) }) { return cat }
+        }
+        return nil
+    }
+
     /// True if the line is *only* a section label — every substantive token is a section word,
-    /// with nothing left but a price/size or filler ("each", "per"). Lets "SHOTS 4" and
-    /// "SHOTS $6 each" read as headers (their price is inherited) instead of ranking as a "$4 drink".
+    /// with nothing left but a price/size, a serving vessel, or filler ("each", "per"). Lets
+    /// "SHOTS 4" and "SHOTS $6 each" read as headers (their price is inherited) instead of ranking
+    /// as a "$4 drink", and lets "WHITES - $9 GLASS / $82 BOTTLE" read as a priced wine section (D).
     static func isPureSectionLabel(_ line: String) -> Bool {
         var sawSection = false
-        for token in line.split(separator: " ").map(String.init) {
+        for token in replaceSeparators(line).split(separator: " ").map(String.init) {
             let w = stripEdgePunctuation(token).lowercased()
             if w.isEmpty { continue }
             if isMeasurementOrPrice(w) || labelFillerWords.contains(w) { continue }
             if sectionWords.contains(w) { sawSection = true; continue }
+            // A vessel names how the section is served, not what it is, so it neither disqualifies
+            // the label nor identifies it. Checked after `sectionWords` so "draft" and "shot", which
+            // are both, still count as section words.
+            if sizeOnlyWords.contains(w) { continue }
             return false   // a real, non-section word — this is an item, not a label
         }
         return sawSection
@@ -226,15 +337,19 @@ public struct MenuParser {
         "cider", "ciders", "seltzer", "seltzers", "domestic", "domestics", "import", "imports",
         "specialty", "signature", "sangria", "martinis", "elixirs", "reds", "whites", "sparkling",
         "mocktails", "spirits", "beverages", "selections", "bubbles", "rosé", "rose", "rosados",
+        // Wine colours. Token-exact everywhere they are used, so "Allagash White" is untouched.
+        "red", "white",
     ]
     static let labelFillerWords: Set<String> = ["each", "ea", "per", "and", "the", "our", "list", "of"]
 
     /// Wine sub-groupings that appear under a `Wine` header without their own price — they must not
     /// reset the section's shared by-the-glass/bottle price.
-    static let wineSubLabels: Set<String> = ["whites", "reds", "rosé", "rose", "bubbles", "sparkling"]
+    static let wineSubLabels: Set<String> = [
+        "whites", "white", "reds", "red", "rosé", "rose", "bubbles", "sparkling",
+    ]
     static func isWineSubLabel(_ line: String) -> Bool {
         var saw = false
-        for token in line.split(separator: " ").map(String.init) {
+        for token in replaceSeparators(line).split(separator: " ").map(String.init) {
             let w = stripEdgePunctuation(token).lowercased()
             if w.isEmpty { continue }
             if wineSubLabels.contains(w) { saw = true; continue }

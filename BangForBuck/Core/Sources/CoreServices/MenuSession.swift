@@ -36,12 +36,25 @@ public struct MenuSession: Equatable, Sendable {
     public let excludedNonAlcoholic: [String]
     /// Which metric to rank by. Mutable so the UI's segmented toggle just sets it and re-reads.
     public var metric: ValueMetric
+    /// How well the menu was read (C). Advisory only — the ranking is always produced; when
+    /// `quality.isLowConfidence` is true the UI should say the read was thin. Defaults to
+    /// `.trusted`, so a hand-built session (manual entry, tests) is unaffected.
+    public let quality: MenuQuality
 
-    public init(drinks: [EditableDrink], excludedNonAlcoholic: [String], metric: ValueMetric) {
+    public init(
+        drinks: [EditableDrink],
+        excludedNonAlcoholic: [String],
+        metric: ValueMetric,
+        quality: MenuQuality = .trusted
+    ) {
         self.drinks = drinks
         self.excludedNonAlcoholic = excludedNonAlcoholic
         self.metric = metric
+        self.quality = quality
     }
+
+    /// Whether to warn the person that the read was thin (C). Never suppresses the ranking.
+    public var isLowConfidence: Bool { quality.isLowConfidence }
 
     // MARK: - Derived views (recomputed on read; cheap for menu-sized inputs)
 

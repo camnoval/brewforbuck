@@ -1,6 +1,6 @@
 //
 //  CaptureHomeView.swift
-//  BangForBuck
+//  ABV
 //
 //  Created by Noval, Cameron on 8/27/26.
 //
@@ -41,84 +41,94 @@ struct CaptureHomeView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                Spacer()
-
-                Image(systemName: "menucard")
-                    .font(.system(size: 52))
-                    .foregroundStyle(.tint)
+            // Deliberately NOT a ScrollView: the four ways in divide the whole screen, so the home
+            // screen is a set of doors rather than a paragraph with small buttons under it. The
+            // cards share the leftover height equally, so it fills a small phone and a large one.
+            VStack(alignment: .leading, spacing: 0) {
+                Wordmark(size: 40)
                     .modifier(DebugOCRExportGesture(action: exportLastScan))
-                Text("Scan a drink menu")
-                    .font(.title2).bold()
-                Text("Get the alcoholic options ranked by how much you get per dollar. Anything we estimate is flagged and you can correct it.")
-                    .font(.callout)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal)
 
-                Spacer()
+                Text("How much drink do you get for your money?")
+                    .font(Theme.callout)
+                    .foregroundStyle(Theme.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, Theme.Space.tight)
 
-                VStack(spacing: 12) {
+                VStack(spacing: Theme.Space.snug) {
                     Button {
                         showCamera = true
                     } label: {
-                        Label("Take a photo", systemImage: "camera")
-                            .frame(maxWidth: .infinity)
+                        ActionCardLabel(title: "Take a photo",
+                                        detail: "Scan the menu in front of you",
+                                        systemImage: "camera.fill",
+                                        isPrimary: true)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
+                    .buttonStyle(ActionCardStyle(isPrimary: true))
                     .disabled(!cameraAvailable || isProcessing)
 
                     PhotosPicker(selection: $libraryItem, matching: .images) {
-                        Label("Choose from library", systemImage: "photo.on.rectangle")
-                            .frame(maxWidth: .infinity)
+                        ActionCardLabel(title: "Choose a photo",
+                                        detail: "Use a menu shot you already have",
+                                        systemImage: "photo.on.rectangle")
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
+                    .buttonStyle(ActionCardStyle())
                     .disabled(isProcessing)
 
                     Button {
                         showQuick = true
                     } label: {
-                        Label("Quick comparison", systemImage: "list.bullet.rectangle.portrait")
-                            .frame(maxWidth: .infinity)
+                        ActionCardLabel(title: "Compare two drinks",
+                                        detail: "Type them in, no photo needed",
+                                        systemImage: "arrow.left.arrow.right")
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
+                    .buttonStyle(ActionCardStyle())
                     .disabled(isProcessing)
 
                     Button {
                         showCompare = true
                     } label: {
-                        Label("Compare store prices", systemImage: "cart")
-                            .frame(maxWidth: .infinity)
+                        ActionCardLabel(title: "Compare store prices",
+                                        detail: "Packs, bottles and cans by the drink",
+                                        systemImage: "cart.fill")
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
+                    .buttonStyle(ActionCardStyle())
                     .disabled(isProcessing)
-
-                    Menu {
-                        ForEach(SampleMenus.all.indices, id: \.self) { index in
-                            Button(SampleMenus.all[index].name) { loadSample(index) }
-                        }
-                    } label: {
-                        Text("Try a sample menu")
-                            .font(.footnote)
-                    }
-                    .disabled(isProcessing)
-                    .padding(.top, 4)
                 }
-                .padding(.horizontal, 24)
+                .frame(maxHeight: .infinity)
+                .padding(.vertical, Theme.Space.base)
 
                 if isProcessing {
-                    ProgressView("Reading menu…").padding(.top, 8)
+                    HStack(spacing: Theme.Space.tight) {
+                        ProgressView()
+                        Text("Reading the menu")
+                            .font(Theme.label)
+                            .foregroundStyle(Theme.inkMuted)
+                    }
+                    .padding(.bottom, Theme.Space.snug)
                 }
 
-                Spacer()
+                Menu {
+                    ForEach(SampleMenus.all.indices, id: \.self) { index in
+                        Button(SampleMenus.all[index].name) { loadSample(index) }
+                    }
+                } label: {
+                    HStack(spacing: Theme.Space.hair) {
+                        Text("Try a demo below")
+                        Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold))
+                    }
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Theme.glass)
+                }
+                .disabled(isProcessing)
             }
-            .navigationTitle("Bang-for-Buck")
+            .padding(.horizontal, Theme.Space.loose)
+            .padding(.top, Theme.Space.tight)
+            .padding(.bottom, Theme.Space.loose)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .background(Theme.canvas.ignoresSafeArea())
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(isPresented: $showResults) {
-                ResultsView(viewModel: viewModel).navigationTitle("Results")
+                ResultsView(viewModel: viewModel).navigationTitle("Best value")
             }
             .navigationDestination(isPresented: $showQuick) {
                 QuickCompareView()

@@ -9,11 +9,16 @@ public struct MenuAnalysis: Equatable {
     public let ranked: [RankedDrink]
     public let needsPrice: [String]
     public let excludedNonAlcoholic: [String]
+    /// How well the menu was read (C). Advisory: when `quality.isLowConfidence` is true the caller
+    /// should say the read was thin, but the ranking is still populated.
+    public let quality: MenuQuality
 
-    public init(ranked: [RankedDrink], needsPrice: [String], excludedNonAlcoholic: [String]) {
+    public init(ranked: [RankedDrink], needsPrice: [String], excludedNonAlcoholic: [String],
+                quality: MenuQuality = .trusted) {
         self.ranked = ranked
         self.needsPrice = needsPrice
         self.excludedNonAlcoholic = excludedNonAlcoholic
+        self.quality = quality
     }
 }
 
@@ -32,13 +37,21 @@ public struct MenuPipeline {
     public func makeSession(lines: [String], metric: ValueMetric) -> MenuSession {
         var drinks: [EditableDrink] = []
         var excluded: [String] = []
+        // A price that doesn't fit the rest of this menu is withdrawn before enrichment, so the item
+        // travels the `needsPrice` path instead of ranking on a misread ("7-Up 415" at $415). Applied
+        // here rather than in either caller because `analyze` delegates to this method, so both paths
+        // see identical data by construction (§10).
+        let items = PricePlausibility.withdrawingImplausiblePrices(parser.parse(lines))
         // Parse order gives each drink a stable id for inline correction.
-        for (index, item) in parser.parse(lines).enumerated() {
+        for (index, item) in items.enumerated() {
             let (drink, excludedName) = DrinkResolver.resolve(item, id: index, knowledge: knowledge)
             if let drink { drinks.append(drink) }
             if let excludedName { excluded.append(excludedName) }
         }
-        return MenuSession(drinks: drinks, excludedNonAlcoholic: excluded, metric: metric)
+        // C — judged on the parser's own output, which is what was measured, and before enrichment
+        // drops the non-alcoholic items, so the denominator is "lines that parsed as a drink".
+        return MenuSession(drinks: drinks, excludedNonAlcoholic: excluded, metric: metric,
+                           quality: MenuQualityGate.assess(items))
     }
 
     /// One-shot read-only analysis. Kept for the headless demo and existing tests; internally it's
@@ -49,7 +62,8 @@ public struct MenuPipeline {
         return MenuAnalysis(
             ranked: ranker.rank(priced, by: metric),
             needsPrice: session.needsPriceDrinks.map { $0.name },
-            excludedNonAlcoholic: session.excludedNonAlcoholic
+            excludedNonAlcoholic: session.excludedNonAlcoholic,
+            quality: session.quality
         )
     }
 }

@@ -1,6 +1,6 @@
 //
 //  AgeGateView.swift
-//  BangForBuck
+//  ABV
 //
 //  Created by Noval, Cameron on 8/27/26.
 //
@@ -8,41 +8,52 @@
 
 import SwiftUI
 
-/// The 21+ age gate shown on first launch (R3). The framing is strictly informational — a
+/// The 21+ gate shown on first launch (R3). The framing is strictly informational — a
 /// price-comparison tool, not an encouragement to drink — which is the defensible posture for App
 /// Review and ad-network alcohol policies. Confirmation is remembered so the gate appears once
 /// (see `RootView`).
+///
+/// Left-aligned on purpose. A centred hero paragraph is the default treatment for a screen like
+/// this, and it makes a legal notice read like marketing; ranged left, it reads as a statement the
+/// person is being asked to agree with.
 struct AgeGateView: View {
     let onConfirm: () -> Void
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(alignment: .leading, spacing: 0) {
+            Spacer(minLength: Theme.Space.wide)
+
+            Wordmark(size: 52)
+
+            Text("Ranks the drinks on a menu by how much alcohol you get for your money.")
+                .font(Theme.title)
+                .foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, Theme.Space.loose)
+
+            Text("An informational price-comparison tool, not an encouragement to drink. Anything it has to estimate is labelled as an estimate, and you can correct it.")
+                .font(Theme.callout)
+                .foregroundStyle(Theme.inkMuted)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, Theme.Space.snug)
+
             Spacer()
 
-            Image(systemName: "checkmark.seal")
-                .font(.system(size: 52))
-                .foregroundStyle(.tint)
+            Text("Continuing confirms you are of legal drinking age, 21 or over in the US.")
+                .font(Theme.label)
+                .foregroundStyle(Theme.inkMuted)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, Theme.Space.snug)
 
-            Text("For adults 21 and over")
-                .font(.title2).bold()
-                .multilineTextAlignment(.center)
-
-            Text("Bang-for-Buck is an informational price-comparison tool for weighing the value of drinks on a menu. It is not an encouragement to drink. By continuing, you confirm you are of legal drinking age (21+ in the US).")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-
-            Spacer()
-
-            Button(action: onConfirm) {
-                Text("I’m 21 or older").frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .padding(.horizontal, 24)
-            .padding(.bottom, 8)
+            Button("I am 21 or older", action: onConfirm)
+                .buttonStyle(PourButtonStyle())
         }
-        .padding(24)
+        .padding(.horizontal, Theme.Space.loose)
+        .padding(.bottom, Theme.Space.loose)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.canvas.ignoresSafeArea())
     }
 }
+
+#Preview { AgeGateView {} }

@@ -1,6 +1,6 @@
 //
 //  CompareView.swift
-//  BangForBuck
+//  ABV
 //
 //  Created by Noval, Cameron on 9/5/26.
 //
@@ -177,7 +177,7 @@ private struct NeedsPriceRow: View {
             Text(product.name)
                 .font(.subheadline.weight(.semibold))
 
-            HStack(spacing: 6) {
+            ChipFlow(spacing: 6, lineSpacing: 6) {
                 MetaChip(text: ValueFormat.package(count: product.count,
                                                    unitOunces: product.unitVolume.fluidOunces))
                 MetaChip(text: ValueFormat.abv(product.abv.value))
@@ -407,7 +407,7 @@ private struct CatalogRow: View {
                 Text(product.name)
                     .font(.subheadline.weight(.medium))
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 6) {
+                ChipFlow(spacing: 6, lineSpacing: 6) {
                     if let abv = product.abv {
                         MetaChip(text: ValueFormat.abv(abv))
                     }

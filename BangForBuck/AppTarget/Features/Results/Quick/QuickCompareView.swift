@@ -1,6 +1,6 @@
 //
 //  QuickCompareView.swift
-//  BangForBuck
+//  ABV
 //
 //  Created by Noval, Cameron on 9/5/26.
 //
@@ -200,7 +200,7 @@ private struct QuickNeedsPriceRow: View {
             Text(drink.name)
                 .font(.subheadline.weight(.semibold))
 
-            HStack(spacing: 6) {
+            ChipFlow(spacing: 6, lineSpacing: 6) {
                 MetaChip(text: ValueFormat.package(count: drink.count,
                                                    unitOunces: drink.unitVolume.fluidOunces))
                 MetaChip(text: ValueFormat.abv(drink.abv.value))

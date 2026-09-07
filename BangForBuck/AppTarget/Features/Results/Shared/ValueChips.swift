@@ -1,6 +1,6 @@
 //
 //  ValueChips.swift
-//  BangForBuck
+//  ABV
 //
 //  Created by Noval, Cameron on 9/5/26.
 //
@@ -141,34 +141,38 @@ struct SectionHeader: View {
     let systemImage: String
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: systemImage).font(.caption2)
+            Image(systemName: systemImage).font(.system(size: 11))
             Text(title)
         }
-        .font(.footnote.weight(.semibold))
-        .foregroundStyle(.secondary)
+        .font(Theme.label)
+        .foregroundStyle(Theme.inkMuted)
         .textCase(nil)
     }
 }
 
 // MARK: - Small components
 
-/// Gold / silver / bronze for the top three, muted for the rest.
+/// Gold / silver / bronze for the top three, muted for the rest. A podium is the right metaphor:
+/// the person wants a winner, and the metals say the order at a glance without reading a number.
+///
+/// The metals are what pushed the **value figure** to bottle green rather than amber — gold beside
+/// amber muddies both, and amber has one job now (marking an estimate).
 struct RankMedal: View {
     let rank: Int
 
     private var fill: Color {
         switch rank {
-        case 1: return Color(red: 0.85, green: 0.65, blue: 0.13)   // gold
-        case 2: return Color(white: 0.62)                          // silver
+        case 1: return Color(red: 0.83, green: 0.63, blue: 0.16)   // gold
+        case 2: return Color(red: 0.66, green: 0.68, blue: 0.70)   // silver
         case 3: return Color(red: 0.72, green: 0.45, blue: 0.20)   // bronze
-        default: return Color.secondary.opacity(0.22)
+        default: return Theme.wash(Theme.inkMuted)
         }
     }
-    private var textColor: Color { rank <= 3 ? .white : .secondary }
+    private var textColor: Color { rank <= 3 ? .white : Theme.inkMuted }
 
     var body: some View {
         Text("\(rank)")
-            .font(.subheadline.weight(.bold))
+            .font(.system(size: 15, weight: .bold, design: .rounded))
             .monospacedDigit()
             .foregroundStyle(textColor)
             .frame(width: 30, height: 30)
@@ -180,12 +184,14 @@ struct MetaChip: View {
     let text: String
     var body: some View {
         Text(text)
-            .font(.caption2.weight(.medium))
+            .font(Theme.micro)
             .monospacedDigit()
             .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Color.secondary.opacity(0.14), in: Capsule())
-            .foregroundStyle(.secondary)
+            .padding(.vertical, 4)
+            .background(Theme.wash(Theme.inkMuted), in: Capsule())
+            .foregroundStyle(Theme.inkMuted)
+            .lineLimit(1)
+            .fixedSize()
     }
 }
 
@@ -196,15 +202,20 @@ struct ProvenanceChip: View {
     var estimatedLabel: String = "estimated"
     var readLabel: String = "from menu"
 
-    private var color: Color { isEstimated ? .orange : .green }
+    /// Amber for a guess, bottle green for something actually printed on the menu. The pairing is
+    /// the palette's own liquid-and-glass, so the honesty badge reads as part of the product rather
+    /// than a warning bolted on.
+    private var color: Color { isEstimated ? Theme.amber : Theme.glass }
 
     var body: some View {
         Text(isEstimated ? estimatedLabel : readLabel)
-            .font(.caption2.weight(.semibold))
+            .font(Theme.micro)
             .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(color.opacity(0.16), in: Capsule())
+            .padding(.vertical, 4)
+            .background(Theme.wash(color), in: Capsule())
             .foregroundStyle(color)
+            .lineLimit(1)
+            .fixedSize()   // never abbreviate the §11 badge
     }
 }
 
@@ -216,11 +227,12 @@ struct PricePill: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: 0) {
             Text(ValueFormat.money(dollars))
-                .font(.subheadline.weight(.semibold))
+                .font(Theme.figureSmall)
                 .monospacedDigit()
+                .foregroundStyle(Theme.ink)
             Text(caption)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                .font(Theme.micro)
+                .foregroundStyle(Theme.inkMuted)
         }
     }
 }
