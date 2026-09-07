@@ -5,7 +5,146 @@ here — keep this lean. Newest note on top; each new note says plainly what it 
 
 ---
 
-## ⇢ STATUS (2026-09-07, part 2) — D and C shipped; menu reading is done for this pass
+## ⇢ STATUS (2026-09-07, part 3) — Rebrand to ABV, a real design layer, chip-wrap fix
+
+**Supersedes the "Next" list in part 2.** Menu reading is closed out for this pass. The next session
+is **monetization only** — see `MonetizationPlan.md`, which carries the conversation opener.
+
+`swift test` is **264 green** (263 + the one test of mine that asserted the wrong thing; the code was
+right, the assertion was wrong — see below).
+
+### 1. The product is now "ABV: A Better Value"
+
+Displayed as **ABV**. What changed and what deliberately did not:
+
+| Name | Value | Note |
+|---|---|---|
+| App Store listing name | `ABV: A Better Value` | typed into App Store Connect at submission; nothing in the repo has to match it |
+| Home-screen display name | `ABV` | `INFOPLIST_KEY_CFBundleDisplayName` |
+| `@main` type | `ABVApp` | `BangForBuckApp.swift` deleted |
+| Bundle identifier | `NovalCo.BangForBuck` | **unchanged on purpose** |
+| Xcode target, project, source folder, repo | `BangForBuck` | **unchanged on purpose** |
+
+**Why the identifiers stayed.** These are four independent names and only the listing name is
+customer-facing. A bundle-ID change is free *only* until an App Store Connect record and a
+RevenueCat product exist; after that it means a new record and a re-created IAP. It was briefly
+changed to `NovalCo.ABV` during this session and then reverted, because it buys nothing a user sees
+and adds a reconciliation step in the week before submission. `Tooling/rename_to_abv.sh` exists and
+is **dry-run verified** (26 pbxproj references → 0) if a full rename is ever wanted; it is not
+needed and should not be run casually. The four references it has to move together are documented
+in its header — Xcode's own Rename refactor misses three of them, which is why it is a script.
+
+### 2. A design layer, in `AppTarget/Design/Theme.swift`
+
+The app was stock SwiftUI throughout: system fonts, `.borderedProminent`, grey opacity chips.
+
+**The idea:** this gets used standing at a bar, in dim light, to decide what is worth buying. So the
+palette is glass and liquid, and the darks are **green-tinted** (`#0D1411`) rather than neutral
+charcoal, which follows from the `#1D6F4C` accent the project had already picked "to read as glass".
+Type is **SF Rounded** — casual, a bit chunky, closer to a chalkboard than a wine list. An earlier
+pass used New York serif and it read as a sommelier's tool; that was wrong for the audience and was
+replaced.
+
+Tokens: `canvas` / `surface` / `glass` / `amber` / `ink` / `inkMuted`, a 4pt spacing scale, two
+radii. Components: `Wordmark`, `ValueFigure`, `PourLine`, `Notice`, `PourButtonStyle`,
+`ActionCardStyle` + `ActionCardLabel`, `ChipFlow`.
+
+**Colour allocation is deliberate and worth preserving:**
+- **amber means exactly one thing — "this number is an estimate" (§11).** Nothing else wears it, so
+  an amber chip anywhere in the app means the same thing.
+- **the value figure is bottle green, not amber**, because the rank medals are gold and gold beside
+  amber muddies both.
+- gold/silver/bronze medals were removed in one pass and **restored on request**; they live in
+  `ValueChips.swift`. Their return is what pushed the value figure off amber.
+
+**Home screen rebuilt.** No longer a `ScrollView`: the four ways in are full-height cards that
+divide the screen, each with an icon, a title and a line saying what it does. The photo card is
+filled green, the other three outlined, so it stays a hierarchy rather than four equal doors. Trade:
+nothing can overflow, so a fifth way in won't fit without reworking the layout.
+
+Copy: the tagline is "See which drink gives you the most for your money." — not a question (the
+person already opened the app) and avoiding the word "value", which the wordmark directly above
+says twice. "No menu on you?" became "Try a demo below".
+
+### 3. The chip truncation bug — a real §11 failure, not cosmetic
+
+The provenance badge was rendering as "estimat…", but **only when the ABV carried a decimal**:
+`4.2% ABV` is about 10pt wider than `5% ABV`, and a plain `HStack` distributes its available width
+across children, so it **compresses rather than wraps**. SwiftUI then truncated whichever child it
+liked, and it picked the badge.
+
+So the honesty badge — the load-bearing §11 promise — was being abbreviated based on whether a
+number happened to have a decimal point. Worth calling that out plainly: an invariant the whole app
+is built around was failing intermittently in the UI.
+
+Fixed with `ChipFlow`, a `Layout` (iOS 16+) that wraps to a new line instead of squeezing, plus
+`.lineLimit(1).fixedSize()` on `MetaChip` and `ProvenanceChip` so neither can be compressed at all.
+
+**It was in five places, not one.** `ResultsView` has its own copy of the chip row with the same
+bug. And pinning `MetaChip` meant the three meta-only rows in `CompareView` and `QuickCompareView`
+would have *overflowed* rather than truncated, so those were converted too. All five chip rows now
+wrap.
+
+`ChipFlow` needs a bounded width to wrap — it falls back to `.infinity` when the proposal has no
+width. Every current call site is inside a bounded row, but a chip row inside a horizontal
+`ScrollView` would silently stop wrapping.
+
+### 4. C now flags instead of withholding
+
+Reversed from part 2 on request, and the request was right. C used to suppress the ranking entirely
+on a thin read. The 1948 Roosevelt list is the counter-example: once `PricePlausibility` withdraws
+its four absurd prices, the top of its podium is `Individual Decanter Service` at **$1.00**, a real
+line for a decanter of whiskey and genuinely the best value on the page. Withholding gave the person
+nothing when a flagged, imperfect answer was available.
+
+`MenuQuality.isRankable` → `isLowConfidence` (inverted), the `guard` in `rankedDrinks` is gone,
+`hasManualPrice` is deleted as dead machinery. Thresholds unchanged: 25% of items priced, 8-item
+floor, same measured 11.3% → 36.1% gap.
+
+**The flag stays set after manual price entry**, on purpose: it is a verdict on the OCR read, not on
+the current state of the list. Recomputing it live would make the banner flicker off as the person
+edits, which reads as the app changing its mind about the photo.
+
+### 5. Fresh device dumps confirmed two things
+
+- **The gutter veto works, and `Tooling/Fixtures/console.txt` is stale.** Its menu-1 block was
+  captured *before* the veto shipped: the recorded lines show the cocktail block torn in half
+  (`BAR MANHATTAN RITTEN HOUSE` … `COCKTAILS` … `RYE, SWEET VERMOUTH, ANGOSTURA BITTERS`). A new
+  dump of the identical 357 observations produces 73 whole lines where the old one produced 84 torn
+  ones. **`faithful.py`'s "8/8" has therefore been validating a pre-veto baseline.** Replace
+  `console.txt` with fresh dumps before trusting the bench again.
+- **The priced-description residual did not fire** on either new dump. Still unmeasured on Rullo's,
+  but the evidence so far is on the good side.
+
+### Known residuals
+
+- **`MenuQuality.isLowConfidence` has no UI.** `Notice` is built for it and unused. Without it, a
+  badly-read menu presents a ranking with no caveat — the honest behaviour C exists to produce is
+  computed and then not shown.
+- **`ValueFigure` / `PourLine` are built and unused.** `RankedValueRow` still renders a plain
+  accent-coloured number.
+- `console.txt` is pre-veto (above).
+- Menu-reading residuals from part 2 all stand: the priced-description case, menu 1 losing its whole
+  wine list to a column mismatch, `COORS LIGHT $02` → $2.00, `CANS` classifying as seltzer.
+
+### A note on my own test
+
+`testVesselIsFillerInsideARealLabel` failed on the first run. The **code was right and the
+assertion was wrong**: `bottle` has been in `sectionWords` since long before D, so
+`isPureSectionLabel("Glass 12 Bottle 40")` is legitimately `true`. What keeps that row out of the
+header path is `pureLabelCategory` returning `nil`, because vessel singulars are deliberately absent
+from `labelCategories`. The test now pins that distinction instead of asserting the wrong mechanism,
+since conflating the two is the easy way to break D later.
+
+### Next
+
+**Monetization, and nothing else.** `MonetizationPlan.md` has the opener and the order of work.
+R5 has now been deferred across five sessions; the window closes Sep 30 and App Review sits inside
+it.
+
+---
+
+## STATUS (2026-09-07, part 2) — D and C shipped; menu reading is done for this pass
 
 **Supersedes the "Next, in order" list in part 1.** D and C are in; the only remaining item on that
 list is **RevenueCat (R5)**, which is now the whole of the critical path.
@@ -1185,7 +1324,8 @@ Phases 2–4 don't need them.
 owner can do — App Store Connect record, RevenueCat project + `remove_ads` product, Devpost
 registration.
 
-**Naming:** canonical name is `BangForBuck` (per the design doc); "brewforbuck" is the
+**Naming (superseded 2026-09-07):** the product is now **ABV: A Better Value**, displayed as
+`ABV`. Historical note follows: canonical name was `BangForBuck` (per the design doc); "brewforbuck" was the
 marketing tagline from the original README.
 
 ---

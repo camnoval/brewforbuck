@@ -1,4 +1,7 @@
-# Bang-for-Buck (brewforbuck)
+# ABV: A Better Value
+
+*Formerly "Bang-for-Buck". The repo directory, Xcode target and bundle
+identifier may still carry the old name; see the Handoff for which of those have been renamed.*
 
 **Take a picture of a drink menu, get the alcoholic options ranked by value — how much
 alcohol you get per dollar — so you can pick the best deal at a glance.** (v2 adds a
@@ -24,7 +27,7 @@ Or run the full pre-flight gate:
 
 The iOS app (`AppTarget/`) — camera/library → Vision OCR → editable, ranked results behind a 21+
 gate — opens in Xcode on macOS against the local `Core` package (needs `NSCameraUsageDescription`;
-iOS 16+). Monetization (RevenueCat) is the Week 2 step.
+iOS 16+). Monetization (RevenueCat) is the only remaining step; see `MonetizationPlan.md`.
 
 ## Where to go next
 
@@ -35,7 +38,8 @@ iOS 16+). Monetization (RevenueCat) is the Week 2 step.
 | A file-by-file map of the code | [`CodebaseReference.md`](./CodebaseReference.md) |
 | The current directory tree (auto-generated) | [`ProjectStructure.md`](./ProjectStructure.md) |
 | Current state + what to do next | [`Handoff.md`](./Handoff.md) |
-| The plan for the menu-reading test pass | [`MenuTestingPlan.md`](./MenuTestingPlan.md) |
+| **The next session: ads + IAP** | [`MonetizationPlan.md`](./MonetizationPlan.md) — **start here** |
+| The plan for the menu-reading test pass (done) | [`MenuTestingPlan.md`](./MenuTestingPlan.md) |
 | The assumptions that could break it | [`Risks.md`](./Risks.md) |
 | Where the ABV/size numbers come from | [`BeverageDataSources.md`](./BeverageDataSources.md) |
 | A non-technical overview | [`PlainLanguageGuide.md`](./PlainLanguageGuide.md) |
