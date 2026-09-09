@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreServices
+import CoreContracts
 
 /// Root of the demo, upgraded to the *editable* results flow. The sample-menu picker stands in for
 /// capture for now — it just feeds `[String]` lines into `ResultsViewModel.load(lines:)`. Next
@@ -11,7 +12,8 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            ResultsView(viewModel: viewModel)
+            ResultsView(viewModel: ResultsViewModel(),
+                        supporter: SupporterStore(purchases: InMemoryPurchaseController()))
                 .navigationTitle("Bang-for-Buck")
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {

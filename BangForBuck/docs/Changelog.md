@@ -3,6 +3,84 @@
 *Append-only history (§2). Newest on top. The Handoff is the live "where we are"; this is
 the log — don't let them merge.*
 
+
+## 2026-09-09 · Monetization: supporter purchase, pure paywall layer, ads cut from v1
+
+**Two findings that changed the design.** Verified against vendor docs, not memory.
+**RevenueCat Ads is not an ad network** — it is a beta analytics feature with experimental APIs that
+reports impressions and revenue alongside an ad SDK you already have, and serves nothing.
+`Architecture.md` §A described a product that does not exist. **AdMob cannot serve before the app is
+live**: Google requires the app to be published, listed and linked before it fully serves ads, new
+iOS apps do not serve until listed, and linking is widely reported to lag by days. A banner in the
+submitted build would be an empty frame, and there is a documented rejection pattern for exactly
+that. **v1 therefore ships the purchase only**; the Shipaton rules qualify on one IAP alone. Side
+benefit: no ad SDK means no IDFA, no ATT prompt, no UMP consent form, no `app-ads.txt`, and privacy
+labels that honestly say no data collected. New `AdsPlan.md` covers v1.1.
+
+- **The product is a tip jar priced in drinks, not a "Remove Ads" unlock.** Three non-consumables —
+  `supporter.shot` $1.99, `supporter.pint` $4.99, `supporter.round` $9.99 — all granting one
+  `supporter` entitlement, so any tier grants the same thing. Named after drinks because the app is
+  denominated in dollars per standard drink; names live in App Store Connect so they localize.
+  Called `supporter` rather than `remove_ads` deliberately: v1 has no ads and selling an absent
+  feature is a rejection risk, while v1.1's ad gate can check this same entitlement with no second
+  product and no migration.
+- **`PurchaseController` rewritten.** The plan named two protocol gaps; one was confirmed, one was
+  mis-framed, and two more were found. Now `supporterTiers()` / `purchase(_ tier:)` /
+  `restorePurchases()` / `supporterStatus()`, with `SupporterTier`, `SupporterStatus`,
+  `PurchaseOutcome` (incl. `.pending` for Ask to Buy) and `RestoreOutcome` (incl.
+  `.nothingToRestore`, the case a `Void` return could not report). `purchase` takes the displayed
+  tier so the amount charged is provably the amount shown, and **`displayPrice` is a `String` from
+  the store, never a number** — there is no numeric price anywhere in `Core`. This is §10 turned on
+  our own money.
+- **`AdPresenter` and `NoopAdPresenter` deleted, not revised.** The protocol's problem was not its
+  shape but being designed against an SDK nobody had used. The plan's proposed fix — a factory
+  vending a view — would have broken the boundary outright, since AdMob's banner is a `UIView` and a
+  `CoreContracts` protocol cannot return a `UIViewRepresentable` without `Core` importing SwiftUI.
+  **The banner has no `Core` representation at all**; `Core`'s only stake in ads is one boolean.
+- **New pure layer in `CoreServices`.** `PaywallFlow` is the whole paywall as one function,
+  `next(from:on:)`, with every state that can return to the tier list carrying the tiers, and
+  inapplicable events returning the state unchanged so a late reply cannot resurrect a dismissed
+  sheet. There is deliberately **no state meaning "showing prices I do not have"**: a failed fetch
+  becomes `.unavailable` with a retry. `SupporterPrompt` holds the four ask rules — never a
+  supporter, never twice, **never on a thin read**, never without a comparison — so the app does not
+  ask for money after a read it does not trust. `SupporterTierKind` resolves the granting product by
+  suffix into a closed set, so an unrecognized tier degrades to a plainer badge rather than a wrong
+  one.
+- **New `AppTarget/Features/Supporter/`.** `SupporterStore` (the only impure piece: one entitlement
+  read plus one persisted "already asked" flag), `PaywallView`, `SupporterBadge`,
+  `SupporterPromptRow`, and seven previews covering tiers ready, store unavailable, failed purchase,
+  Ask-to-Buy hold, existing supporter, nothing-to-restore and the prompt row. Wired through
+  `ABVApp` → `RootView` → `CaptureHomeView` (badge under the wordmark) → `ResultsView` (prompt above
+  the explainer, shown only after a ranking of at least two drinks).
+- **Amber formally reserved.** The supporter badge and the paywall's messages use green and muted
+  text rather than `Theme.amber` or the `Notice` component, so an amber element anywhere in the app
+  still means exactly one thing: this number is an estimate.
+- **Cut: the value-spread line.** `MenuValueSpread` and `SupporterPrompt.isWorthMentioning` are
+  built, tested and currently unused. The original version multiplied a tier price by a
+  drinks-per-dollar rate, which mixes the customer's storefront currency with the menu's and produces
+  a confident wrong number outside the US store; the dimensionless ratio that replaced it was then
+  cut as a flourish. Kept only for a possible share card.
+- **`ContentView.swift` deleted.** Unreferenced, superseded by `RootView` + `CaptureHomeView`, and
+  independently broken: it held one `ResultsViewModel` and passed a second, fresh one to
+  `ResultsView`, so its `load()` wrote to a view model nothing displayed.
+- **`swift test` 264 → 316.** `ContractsSmokeTests` 3 → 13, plus `PaywallFlowTests` (18),
+  `SupporterPromptTests` (15) and `MenuValueSpreadTests` (9). `Core` still has no monetization
+  dependency and still builds on Linux.
+- **XCTest gotcha recorded.** `XCTAssertEqual` and friends take a non-async autoclosure, so
+  `XCTAssertEqual(await thing(), x)` does not compile. Every `await` now lands in a `let` before the
+  assertion. This broke an entire test file at once and is now in `ProjectConventions.md` §8.
+- **Store setup started.** Paid Apps Agreement signed; banking pending "Clear", which blocks all
+  purchase testing including sandbox. App ID `NovalCo.BangForBuck` registered explicitly with **no
+  capabilities** (In-App Purchase is automatic; the camera is an Info.plist string). Product
+  localizations done; review screenshots pending the paywall they must depict. Noted that SDK 5.x
+  needs an **In-App Purchase Key**, not the App-Specific Shared Secret, or transactions silently
+  fail to record.
+- **Docs.** `MonetizationPlan.md` rewritten as the design of record; new `AdsPlan.md` and
+  `ShipatonSubmission.md`; `Risks.md` gains a corrected R3, a reduced R5, and new **R6** (App Store
+  Connect refusing to attach a first IAP to a version) and **R7** (the RevenueCat credential failing
+  silently); `Architecture.md` §3/§4/§6/§13/§A/§B corrected; `CodebaseReference.md`, `README.md` and
+  `PlainLanguageGuide.md` updated; `ProjectConventions.md` gains four generalizable lessons.
+
 ## 2026-09-05 · Menu scanner on the shared catalog; metric container sizes
 - **`CatalogBackedKnowledge` + `CatalogMatcher` (CoreServices):** the menu scanner now consults the
   same bundled product catalog as the store calculator, behind a strict match rule (one name

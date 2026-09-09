@@ -30,6 +30,36 @@ on a guess. For strength and serving size it will estimate when the menu doesn't
 always shows you that it's an estimate. The whole point is an honest answer: "here's the
 best value, and here's exactly what we assumed to get there."
 
+## How the app makes money
+
+**The whole app is free, and it stays free.** Nothing is locked, there's no trial, and there's no
+subscription. The part that does the actual work — reading the menu and ranking the drinks — will
+never be behind a payment.
+
+If you find it useful, you can buy the developer a drink. There are three amounts, named the way the
+rest of the app talks: a well shot, a pint, or a round. They all do the same thing, so pick whichever
+feels right. It's a one-time purchase, it can be restored if you change phones, and once you've done
+it the app never asks again.
+
+Three things about how that ask works, because they were deliberate choices:
+
+- **It only appears after the app has actually helped.** If a photo came out badly and the app isn't
+  confident in what it read, it doesn't ask you for money. Asking for payment for a job it may have
+  done poorly is the wrong instinct.
+- **It asks once.** If you say no, that's a real answer, and it won't come back.
+- **It never shows you a price it isn't sure about.** The amounts come straight from the App Store in
+  your own currency. If it can't reach the store, it says so and offers to try again, rather than
+  showing you a number it made up. That's the same rule as the menu prices, applied to our own.
+
+There are no ads in this version. A later version may add a banner, and if it does, anyone who bought
+a drink won't see it.
+
+## What the app knows about you
+
+Nothing. The menu reading happens entirely on your phone using Apple's built-in text recognition, so
+your photos never leave the device and aren't sent anywhere. There's no account, no tracking, and no
+analytics on what you scan.
+
 ## A note on responsibility
 
 This is an informational price-comparison tool, not an encouragement to drink more. It's for

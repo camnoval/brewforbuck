@@ -8,12 +8,17 @@ import CoreServices
 /// this view only renders and dispatches edits.
 struct ResultsView: View {
     @ObservedObject var viewModel: ResultsViewModel
+    /// The `supporter` entitlement, owned by `ABVApp`. Read here to decide whether the prompt
+    /// appears at all; the decision itself is `SupporterPrompt.shouldOffer` in `Core`.
+    @ObservedObject var supporter: SupporterStore
 
     /// The drink currently open in the correction sheet (`nil` = closed).
     @State private var editing: EditableDrink?
     /// Whether the "add a drink" sheet is open.
     @State private var adding = false
-
+    /// Whether the supporter sheet is open.
+    @State private var showingPaywall = false
+    
     var body: some View {
         List {
             metricSection
@@ -28,6 +33,11 @@ struct ResultsView: View {
 
             if !viewModel.excluded.isEmpty {
                 excludedSection
+            }
+
+            if supporter.shouldOffer(rankedCount: viewModel.ranked.count,
+                                     isLowConfidence: viewModel.session.isLowConfidence) {
+                supporterSection
             }
 
             explainerSection
@@ -56,6 +66,9 @@ struct ResultsView: View {
             AddDrinkSheet { name, abv, size, price in
                 viewModel.addDrink(name: name, abv: abv, sizeFluidOunces: size, priceDollars: price)
             }
+        }
+        .sheet(isPresented: $showingPaywall) {
+            PaywallView(store: supporter)
         }
     }
 
@@ -137,6 +150,17 @@ struct ResultsView: View {
         } footer: {
             Text("Excluded from the ranking.")
         }
+    }
+
+    /// Shown only after a scan that actually produced a ranking, and only once ever.
+    ///
+    /// `markAsked()` fires on appearance rather than on tap, so scrolling past it counts as having
+    /// been asked. Asking again on the next scan would be nagging.
+    private var supporterSection: some View {
+        Section {
+            SupporterPromptRow { showingPaywall = true }
+        }
+        .onAppear { supporter.markAsked() }
     }
 
     private var explainerSection: some View {

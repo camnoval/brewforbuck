@@ -20,6 +20,10 @@ import CoreServices
 struct CaptureHomeView: View {
     @StateObject private var viewModel = ResultsViewModel()
 
+    /// The `supporter` entitlement, owned by `ABVApp`. Read here for the badge, and passed through
+    /// to `ResultsView`, which is where the prompt can appear.
+    @ObservedObject var supporter: SupporterStore
+
     /// Injected behind the contract (§6). Swap for a fake in tests; swap the OCR engine here only.
     private let recognizer: any TextRecognizer = VisionTextRecognizer()
 
@@ -45,8 +49,16 @@ struct CaptureHomeView: View {
             // screen is a set of doors rather than a paragraph with small buttons under it. The
             // cards share the leftover height equally, so it fills a small phone and a large one.
             VStack(alignment: .leading, spacing: 0) {
-                Wordmark(size: 40)
-                    .modifier(DebugOCRExportGesture(action: exportLastScan))
+                // The badge sits directly under the wordmark: quiet, permanent, and the first thing
+                // a supporter sees on every launch. Nothing here is amber (§11).
+                VStack(alignment: .leading, spacing: Theme.Space.tight) {
+                    Wordmark(size: 40)
+                        .modifier(DebugOCRExportGesture(action: exportLastScan))
+
+                    if let kind = supporter.tierKind {
+                        SupporterBadge(kind: kind)
+                    }
+                }
 
                 // Says what the app does, in the user's terms. Deliberately not a question (the
                 // person opened the app already) and deliberately avoids the word "value", which
@@ -131,7 +143,8 @@ struct CaptureHomeView: View {
             .background(Theme.canvas.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(isPresented: $showResults) {
-                ResultsView(viewModel: viewModel).navigationTitle("Best value")
+                ResultsView(viewModel: viewModel, supporter: supporter)
+                    .navigationTitle("Best value")
             }
             .navigationDestination(isPresented: $showQuick) {
                 QuickCompareView()
@@ -161,6 +174,8 @@ struct CaptureHomeView: View {
             } message: { message in
                 Text(message)
             }
+            // Picks up a purchase made on another device, and a restore done elsewhere in the app.
+            .task { await supporter.refresh() }
         }
     }
 
