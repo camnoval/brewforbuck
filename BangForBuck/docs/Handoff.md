@@ -5,7 +5,172 @@ here — keep this lean. Newest note on top; each new note says plainly what it 
 
 ---
 
-## ⇢ STATUS (2026-09-07, part 3) — Rebrand to ABV, a real design layer, chip-wrap fix
+## ⇢ STATUS (2026-09-09, part 2) — RevenueCat is integrated and proven on device
+
+**Supersedes the "Next" list in the 2026-09-07 part 3 note.** Monetization is done except for the
+Apple-side steps. `swift test` is **319 green** (316 + 3; see §4).
+
+**Read this first: the 2026-09-09 part 1 note does not exist.** The docs from that session were all
+saved (`Risks.md`, `MonetizationPlan.md`, `Architecture.md`, `ProjectConventions.md`,
+`CodebaseReference.md`, `Changelog.md` all carry 17:13–17:26 timestamps) but `Handoff.md` was not
+(14:29). The code matched those docs exactly — 316 test functions, the revised four-method
+`PurchaseController`, no `AdPresenter` — so the work was real and only the note was lost. The 09-07
+note's lesson runs backwards here: that one over-reported work absent from the tree, this one
+under-reported work present in it. **Grep before believing either direction.**
+
+### 1. The SDK
+
+`AppTarget/Infrastructure/RevenueCatPurchases.swift`, new, an `actor`, and the only file that may
+import RevenueCat. `ABVApp.swift` calls `RevenueCatPurchases.configure()` in `init()` and builds
+`SupporterStore` around the real conformer. `ContentView.swift` deleted (unreferenced, superseded by
+`CaptureHomeView`, still compiling because the Xcode group is synchronized).
+
+**SDK 5.88.0** via SPM, mirror repo `https://github.com/RevenueCat/purchases-ios-spm`, Up to Next
+Major from 5.88.0. Product `RevenueCat` only — **not** `RevenueCatUI` (their prebuilt paywall; we
+have `PaywallFlow` + `PaywallView`), not `ReceiptParser`, and emphatically not
+`RevenueCat_CustomEntitlementComputation`, which is the variant for computing entitlements on your
+own backend.
+
+**Three API findings, verified against RevenueCat's docs and `purchases-ios` `main` on 2026-09-09.**
+Re-verify before trusting; this note is a record, not an authority.
+
+- **`.pending` and `.cancelled` arrive by `throw`, not in the result.** Ask to Buy throws
+  `ErrorCode.paymentPendingError` (case 20); a dismissed sheet throws `.purchaseCancelledError`. The
+  contract already had both cases, so nothing in `Core` moved — they just come out of the `catch`.
+- **`userCancelled` is a hint, never the truth.** RevenueCat documents it as a convenience over the
+  error, and purchases-ios issue #4903 reported it reading `true` on ~22% of *successful* production
+  transactions on 5.17.0 (now closed, resolution not publicly visible). Per `ProjectConventions.md`
+  §8 the entitlement is the state: the flag is consulted **only** when `supporter` is inactive. That
+  ordering prevents the expensive failure, which is somebody paying and getting the paywall back.
+- **`Purchases.shared` traps when unconfigured**, so every method guards on `isConfigured`.
+
+**Not verified:** every SF Symbol still rests on my reading rather than the SF Symbols app.
+`mug.fill`, `wineglass.fill`, `drop.fill`, `heart.fill`, `drop.triangle`, `xmark` all render on
+device, so they exist; nothing else was checked.
+
+### 2. Everything R7 warned about happened
+
+Both failure modes fired, in the order the risk predicted, and the code caught both.
+
+- **The identifier mismatch was real.** App Store Connect had `supporter.shot/.pint/.round`;
+  RevenueCat had `support.shot/.pint/.round`. Missing three letters. Fixed on the RevenueCat side
+  (ASC identifiers cannot be changed after creation and the localizations were already written), and
+  fixed by **importing** the products from ASC rather than retyping them, which makes the class of
+  mistake impossible to repeat. Note the app code would have survived it silently:
+  `SupporterTierKind.resolve` matches on the `.shot`/`.pint`/`.round` suffix, so the badge would have
+  read correctly while the paywall sat empty.
+- **Test Store products are separate objects from the App Store products**, even sharing an
+  identifier, and the entitlement had only the Apple three attached. So a Test Store purchase
+  recorded fine and granted nothing. `RevenueCatPurchases` threw `EntitlementNotGranted` rather than
+  thanking anybody, which is exactly the intended behaviour, and the fix was attaching the three
+  Test Store products to `supporter` as well. **Six associated products, not three.**
+
+Lesson for the register: the app refusing to say thank you was the *only* signal that the dashboard
+was wrong. Had the conformer trusted `userCancelled` or assumed success, this would have shipped as
+an app that thanks people while granting nothing.
+
+### 3. What is proven, and on what
+
+On device, Test Store key, SDK 5.88.0, iOS 26.4.2. Offerings fetch, three tiers at the right prices
+in shot/pint/round order, a recorded purchase (`POST /v1/receipts` 200, transaction finished, visible
+in the RevenueCat dashboard), a real user cancel, two simulated failures, the thank-you state, the
+home-screen badge, and the entitlement surviving relaunch.
+
+**Ask to Buy is the one branch never exercised.** It needs sandbox, which needs banking at "Clear".
+
+**Banking was still not "Clear"** at the end of this session, and it did not block anything: the
+Test Store involves Apple not at all. Only sandbox waits on it. That took the one uncontrollable item
+off the critical path, which is worth remembering next time — the instinct was to treat banking as a
+blocker for the whole purchase path, and it is a blocker for one step of it.
+
+### 4. Three reversals, all deliberate
+
+**a. The earned prompt moved from a list row to a timed sheet.** `SupporterPromptRow` sat below the
+ranking, the needs-price bucket, the add-a-drink row and the excluded section. On the Southside menu
+that is roughly forty rows down, and `markAsked()` fired on the row merely *appearing*, so the one
+ask anybody ever got was being spent on something almost nobody scrolled to. It now presents
+`PaywallView` five seconds after a qualifying scan, from `ResultsView.offerSupportIfEarned()`.
+Leaving inside the window cancels the task, so `markAsked()` never fires and the ask survives.
+`SupporterPromptRow` is **unreferenced but kept** — unlike `AdPresenter` it was written against
+something real, and it is the obvious component if a quieter second surface is ever wanted.
+
+**b. "Never ask twice" became a three-scan cadence.** `hasAlreadyAsked: Bool` →
+`scansSinceLastAsk: Int`, with `SupporterPrompt.scansBetweenAsks = 3`. `SupporterStore` persists the
+counter, starts a fresh install **at** the interval so the first qualifying scan still asks, counts
+every results screen including thin reads, and resets to 0 when the sheet shows. Asks land on scans
+1, 4, 7. Rule 1 still means a supporter is never asked again.
+
+This is a reversal of a settled `MonetizationPlan.md` §6 decision and it changes a promise that was
+public in `PlainLanguageGuide.md`. That doc is now corrected; if the cadence is ever tuned, correct
+it again, because it ships with the open-source entry.
+
+Tests: `testItNeverAsksTwice` deleted (it asserted the opposite of the new rule) and five added —
+the reset, the whole interval, the ask returning, an overshooting counter, and a thin read still
+refusing however many scans have passed. **316 → 319.**
+
+**c. A permanent Support entry point in the home-screen toolbar.** Not a second ask: it exists
+because **`PaywallView` is where Restore Purchases lives**, and with a one-shot prompt the restore
+path was reachable exactly once per install. App Review exercises restore on a non-consumable, so
+that was a 2.1 rejection waiting to happen. Labelled "Support", not "Donate": Apple treats
+charitable donation collection differently from tipping a developer, and R3 already puts this app
+under extra scrutiny.
+
+### 5. Also landed
+
+- **The `isLowConfidence` `Notice` is wired** (`ResultsView.thinReadSection`), which closes the
+  largest residual in the 09-07 note. Says what was missed with real counts rather than the phrase
+  "low confidence", and offers two actions: rescan, or push `QuickCompareView`, which is the honest
+  recommendation because two hand-typed drinks have no estimates at all.
+- **The paywall's dismiss is an X**, not "Done" — the sheet arrives uninvited, so the exit should read
+  as dismiss rather than confirm. Header is two short lines: free promise first, "just a tip jar"
+  second.
+- **The thank-you state is a large tier mark.** `ContributorMark` in `SupporterBadge.swift`: 68pt
+  glyph plus "Shot/Pint/Round Contributor" in that tier's metal. The **round is two `mug.fill`
+  mirrored and leaning**, because SF Symbols has no clinking-mugs glyph (searched; the 🍻 emoji
+  exists but cannot be tinted). Tiers read as a progression: a drop, a mug, two mugs.
+- **The metals moved to `Theme`.** `gold`/`silver`/`bronze` were raw literals inside `RankMedal`,
+  which broke "Theme.swift is the only place colours live". Same three values, named once, nothing
+  renders differently. Kept **non-adaptive** deliberately: an adaptive gold drifts toward
+  `Theme.amber` in light mode, which is the muddying the comment on `amber` exists to prevent.
+
+### 6. Known residuals
+
+- **The metals now carry two meanings**, rank and supporter tier. They never share a screen, so the
+  signal stays legible, but this is the second-meaning problem §11 warns about and a third use would
+  be one too many.
+- **Menu reading is worse than the 09-07 note recorded**, in one case consequentially. The `F`
+  residual (`sparkling peach pear` opening a wine section) reaches **two** items on the Braintree
+  cocktail menu, not one, and changes a category. Worse: on a Bristol club menu, a dotted leader line
+  `WINES...... ....50` inherits **$50 to six wines** as a by-the-glass price. That is a wrong price
+  that *ranks*, and `isLowConfidence` stays false at 13/20 priced, so nothing flags it. Everything
+  else observed is cosmetic: `Southsidg`/`BRAINT` (a logo) become needs-price items,
+  `Miller 64` → `Miller` at **$64.00**, `ATHLETIC BREWING CO. NON ALCOHOLIC` swallowed as a
+  description, and a stray `8` dropped as `empty-name-after-clean`.
+- **`SupporterPromptRow` is unreferenced** (above).
+- **The `ABV-INVITE` DEBUG trace in `ResultsView` is still in.** Useful; `#if DEBUG` so it does not
+  ship. It names values but not which rule failed, which cost a round trip — worth improving if the
+  cadence is ever debugged again.
+- **Testing the ask now costs four scans and an app delete.** `UserDefaults` survives an Xcode
+  reinstall, so only deleting the app resets the counter and the age gate. A DEBUG-only reset was
+  offered and not built.
+
+### 7. Next, in order
+
+1. **R6, and it is the only thing that can still cost days.** Archive, upload, and confirm the
+   "In-App Purchases and Subscriptions" section renders on the version page and lets all three
+   products be selected. Verify from the TestFlight console that the Test Store warning is **gone** —
+   that is evidence the `#if DEBUG` split works, where checking the scheme is only an assumption.
+2. **`ValueFigure` / `PourLine` into `RankedValueRow`.** Still built and unused; the row still draws
+   a plain accent-coloured number. R5 says do not cut these.
+3. Screenshot the paywall, attach to all three products' Review Information, submit the products
+   **with** the build.
+4. Listing copy, privacy labels (still "no data collected" — no ad SDK, Vision on-device), age
+   rating, submit.
+5. Sandbox purchase and Ask to Buy, once banking says "Clear".
+
+---
+
+## STATUS (2026-09-07, part 3) — Rebrand to ABV, a real design layer, chip-wrap fix
 
 **Supersedes the "Next" list in part 2.** Menu reading is closed out for this pass. The next session
 is **monetization only** — see `MonetizationPlan.md`, which carries the conversation opener.

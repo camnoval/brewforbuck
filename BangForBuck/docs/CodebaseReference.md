@@ -41,7 +41,7 @@ producing a list of these and sorting it.
 | **Contracts** | `Core/Sources/CoreContracts` | CoreModel | Protocols the shell implements: OCR, beverage knowledge, purchases (+ the pure `StaticBeverageKnowledge`) | ✅ Phase 3, revised 2026-09-09 |
 | **Services (pure)** | `Core/Sources/CoreServices` | CoreModel/CoreContracts | Parse → items; estimate ABV/size; compute + sort the value metric; the paywall state machine | ✅ Phases 4–5 + monetization |
 | **Features (UI)** | `AppTarget/Features` | Core | Capture (camera/library), editable Results (correct, price, add/remove), 21+ gate, supporter paywall + badge | ✅ |
-| **Infrastructure (shell)** | `AppTarget/Infrastructure` | Core (protocols) | Vision OCR ✅ ; RevenueCat purchases ⏳ | ◑ |
+| **Infrastructure (shell)** | `AppTarget/Infrastructure` | Core (protocols) | Vision OCR ✅ ; RevenueCat purchases ✅ | ● |
 
 **Dependency direction points down only.** `CoreServices` never imports Vision or
 RevenueCat; it depends on the *protocols* in `CoreContracts`, and the shell supplies the
@@ -185,10 +185,11 @@ banner view will have no `Core` representation when it arrives. See `AdsPlan.md`
 
 ### `AppTarget/`
 
-- **`ABVApp.swift`** — the `@main` entry. Owns the `SupporterStore` as a `@StateObject` and injects
-  it into `RootView`. **The one line that changes when the SDK lands** is the controller passed to
-  that store: `InMemoryPurchaseController()` today, `RevenueCatPurchases()` once written. A build
-  shipping the in-memory controller charges nobody and entitles nobody.
+- **`ABVApp.swift`** — the `@main` entry. Calls `RevenueCatPurchases.configure()` in `init()` and
+  then builds the `SupporterStore` around `RevenueCatPurchases()`, injecting it into `RootView`.
+  Both happen in `init` rather than as a property default so the ordering is visible: a property
+  initializer runs before the init body, and "configure before any other SDK call" is a documented
+  requirement rather than a preference.
 - **`App/RootView.swift`** — `@AppStorage` 21+ gate → `CaptureHomeView`, passing the supporter store
   through. ~~`ContentView.swift`~~ **deleted 2026-09-09**: unreferenced, superseded by
   `RootView` + `CaptureHomeView`, and independently broken (it held one `ResultsViewModel` and passed
@@ -214,24 +215,34 @@ banner view will have no `Core` representation when it arrives. See `AdsPlan.md`
   `BrandCatalog.all`, container presets, "Waiting on a price" bucket, store explainer).
 - **`Features/Supporter/`** ✅ *new 2026-09-09*:
   - `SupporterStore.swift` — `@MainActor ObservableObject` (matching `ResultsViewModel`'s shape, not
-    the `@Observable` macro). Holds `status`, the persisted `hasAskedForSupport` flag, and forwards
+    the `@Observable` macro). Holds `status`, the persisted `scansSinceLastAsk` counter, and forwards
     to the injected `PurchaseController`. **The only impure piece of the feature**; every decision
-    delegates to `SupporterPrompt`. `markAsked()` fires when the prompt *appears*, so scrolling past
-    counts as asked.
+    delegates to `SupporterPrompt`. `recordScan()` runs once per results screen *including* thin
+    reads, so the counter measures use rather than asks; `markAsked()` restarts the interval and
+    fires when the sheet *appears*, so dismissing it counts as asked. A fresh install starts at the
+    interval so the first qualifying scan still asks.
   - `PaywallView.swift` — renders `PaywallState` and reports events; contains no transitions of its
     own. Also holds `TierRow` and `SupporterPromptRow`, and **seven previews** covering tiers ready,
     store unavailable, failed purchase, Ask-to-Buy hold, existing supporter, nothing-to-restore, and
     the prompt row.
-  - `SupporterBadge.swift` — the home-screen badge, plus the `SupporterTierKind` → SF Symbol and copy
-    mapping in one place. ⚠️ **The symbol names (`drop.fill`, `mug.fill`, `wineglass.fill`,
-    `heart.fill`) are unverified.** A bad `systemName` renders blank rather than crashing, so check
-    them in a preview.
+  - `SupporterBadge.swift` — the home-screen badge, the `SupporterTierKind` → symbol/metal/copy
+    mapping in one place, and `ContributorMark`, the large tier mark on the thank-you state. The
+    round is **two mirrored `mug.fill`** rather than one glyph, because SF Symbols has no
+    clinking-mugs symbol; which of the two is mirrored is the `mirrorsLeftMug` constant, so the
+    handles can be flipped outward without re-reasoning about the glyph. Tiers read as a progression:
+    a drop, a mug, two mugs. All symbols used here now render on device.
 - **`Infrastructure/VisionTextRecognizer.swift`** — `TextRecognizer` via `VNRecognizeTextRequest`
   (on-device), PNG → `CGImage` → `[TextObservation]` → `LineAssembler`. Holds the
   `CapturedImage(uiImage:)` bridge.
-- **`Infrastructure/RevenueCatPurchases.swift`** ⏳ — **the only remaining monetization file, and the
-  only file in the project that may import RevenueCat.** Verified API surface as of 2026-09-09 is
-  recorded in the Handoff's next-steps section; re-check the docs rather than trusting that note.
+- **`Infrastructure/RevenueCatPurchases.swift`** ✅ *2026-09-09 part 2* — the `PurchaseController`
+  conformer and **the only file in the project that may import RevenueCat** (SDK 5.88.0). An
+  `actor`, and not by preference: this target sets `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so a
+  `struct` or `final class` here is implicitly main-actor-isolated and cannot satisfy the protocol's
+  nonisolated requirements. `InMemoryPurchaseController` is an actor for the same reason, so the real
+  and fake conformers share an isolation shape. Caches the `Package` objects behind the displayed
+  tiers, so `purchase(_:)` buys the exact package whose price went on screen rather than re-resolving
+  it (§10). API surface verified 2026-09-09 and recorded in that Handoff note; re-check the vendor
+  docs rather than trusting it.
 
 ### `docs/`
 

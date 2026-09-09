@@ -193,8 +193,10 @@ All these services are **pure** — no I/O, no framework, deterministic, fast, f
   deliberately **no state meaning "showing prices I do not have"**: a failed fetch becomes
   `.unavailable` with a retry.
 - **`SupporterPrompt`** — the four rules for when the app may ask for money: never an existing
-  supporter, never twice, **never on a thin read**, never without at least two ranked drinks to
-  compare. Also `SupporterTierKind`, a closed set resolved from the granting product identifier by
+  supporter, not until `scansBetweenAsks` scans have passed since the last ask, **never on a thin
+  read**, never without at least two ranked drinks to compare. The cadence replaced "never ask twice"
+  on 2026-09-09; the interval is one constant, and the persisted scan counter lives in
+  `SupporterStore` because a count of real-world events is not something a pure rule can hold (§7). Also `SupporterTierKind`, a closed set resolved from the granting product identifier by
   suffix, so an unrecognized tier degrades to a plainer badge rather than a wrong one.
 
 The shell (`VisionTextRecognizer`, `RevenueCatPurchases`) is thin wiring that adapts a framework to
@@ -391,10 +393,19 @@ That localization is the whole point — the calories ranking is a metric swap, 
 - **All behaviour is pure.** `PaywallFlow` is the state machine, `SupporterPrompt` is the four ask
   rules, both in `CoreServices` with tests. `SupporterStore` in `AppTarget` is the only impure part:
   one entitlement read and one persisted "already asked" flag.
-- **The ask is earned.** The prompt appears only after a scan that produced a ranking of at least
-  two drinks, never when `MenuQuality.isLowConfidence` fired, never to an existing supporter, and
-  never twice. Asking for money after a read the app does not trust is the wrong instinct, and that
-  rule is the one most worth keeping if anything here is cut.
+- **The ask is earned, and it recurs.** The prompt appears only after a scan that produced a ranking
+  of at least two drinks, never when `MenuQuality.isLowConfidence` fired, and never to an existing
+  supporter. It returns once `SupporterPrompt.scansBetweenAsks` scans have passed rather than once
+  ever (reversed 2026-09-09). Asking for money after a read the app does not trust is the wrong
+  instinct, and that rule is the one most worth keeping if anything here is cut.
+- **The ask is a sheet, not a row.** Presented a few seconds into the results screen. The row version
+  sat below the ranking, the needs-price bucket and the excluded section — forty rows down on a long
+  menu — and consumed the one ask by merely appearing on screen.
+- **A permanent Support entry point in the home-screen toolbar, and it is a review requirement rather
+  than a second ask.** `PaywallView` is where Restore Purchases lives, and App Review exercises
+  restore on a non-consumable, so a one-shot prompt left the restore path reachable exactly once per
+  install. Labelled "Support" and not "Donate", because Apple treats charitable donation collection
+  differently from tipping a developer and R3 already invites extra scrutiny.
 - **Store setup gates everything and involves waiting on Apple.** In order: Paid Apps Agreement
   (Account Holder only), Tax and Banking to status **"Clear"** (days, and no purchase can be tested
   until it lands), App ID, app record, the three products, the **In-App Purchase Key** (StoreKit 2

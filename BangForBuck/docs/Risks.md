@@ -94,9 +94,19 @@ zero. The pure layer and the paywall UI are built and tested (316 green): revise
    store listing required, so a late rejection no longer means no entry. See
    `ShipatonSubmission.md`.
 
-**The one thing still outside our control:** the Paid Apps Agreement is signed, but banking must
-reach status **"Clear"** before any purchase can be tested, including in sandbox. Expected
-2026-09-10. Nothing about the purchase path can be verified until it lands.
+**Update 2026-09-09 (part 2): the SDK is in and the purchase path is proven on device.** Offerings,
+a recorded purchase, a real cancel, two simulated failures, the thank-you state and an entitlement
+surviving relaunch, at 319 green. Remaining: R6, review screenshots, sandbox.
+
+**And banking turned out not to gate this.** The paragraph below was wrong in a useful direction:
+the **RevenueCat Test Store involves Apple not at all**, so the entire purchase path was verifiable
+with banking still pending. Only the sandbox pass and Ask to Buy wait on "Clear". Worth keeping as a
+reasoning error rather than deleting: a dependency was assumed to block everything when it blocked
+one step, and the cost of that assumption would have been a day of not working on the thing that was
+already testable.
+
+**Superseded, kept for the record:** the Paid Apps Agreement is signed, but banking must reach status
+**"Clear"** before an *App Store* purchase can be tested, including in sandbox. Expected 2026-09-10.
 
 **Threatens:** shipping inside the Aug 1 – Sep 30 window at all. Note the rules require the first
 public version to be **released**, not submitted, inside the window.
@@ -135,6 +145,23 @@ Store purchase appears in the RevenueCat dashboard, not just in the app; and tre
 no tiers" as a configuration mismatch first, not a code bug. Because the app's own state machine
 distinguishes `.unavailable` from `.ready`, an empty offering surfaces as a retry rather than a blank
 screen. Also: **a Test Store key must never ship**; gate the key by build configuration.
+
+**Outcome 2026-09-09: both halves fired, and neither was silent.** The In-App Purchase Key uploaded
+clean ("valid credentials"). But the product identifiers really were mismatched — App Store Connect
+`supporter.*` against RevenueCat `support.*`, three missing letters — and separately the `supporter`
+entitlement had only the App Store products attached, **not the Test Store ones, which are separate
+objects even when they share an identifier**. So a Test Store purchase recorded and granted nothing.
+
+What caught it was the conformer refusing to lie. `RevenueCatPurchases` treats the entitlement as the
+source of truth and threw `EntitlementNotGranted` rather than presenting a thank-you, which is the
+one behaviour that turns this risk from silent into loud. Note also that the app would have looked
+*fine* on the identifier mismatch alone: `SupporterTierKind.resolve` matches on the `.shot`/`.pint`/
+`.round` suffix, so the badge would have read correctly while the paywall sat empty.
+
+**Three habits that earned their keep and should be repeated.** Import products from App Store
+Connect rather than retyping them, which makes the typo class impossible. Attach every store's
+products to the entitlement and then *count* — six, not three. And treat a purchase reported as
+failed while the receipt posted 200 as a dashboard problem before touching the code.
 
 ---
 

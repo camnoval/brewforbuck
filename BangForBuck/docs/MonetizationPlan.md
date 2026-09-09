@@ -5,8 +5,10 @@ what was actually decided, including two findings that invalidated the original 
 "conversation opener" section that used to head this file is gone: that session happened. The v1.1
 ad work moved to `AdsPlan.md`, and the competition strategy to `ShipatonSubmission.md`.*
 
-**Status: the pure layer and the paywall UI are built and tested. The SDK is not yet integrated.**
-See `Handoff.md` (newest note) for the exact remaining steps.
+**Status: integrated and proven on device (2026-09-09).** The SDK is in, a Test Store purchase
+records end to end, and every purchase branch except Ask to Buy has been exercised. Remaining work is
+Apple-side: R6, review screenshots, and a sandbox purchase once banking clears. See `Handoff.md`
+(newest note) for the steps, and for the two R7 failures that both actually fired.
 
 ---
 
@@ -213,7 +215,13 @@ guess (§10).
 `CoreServices/SupporterPrompt.swift` — the four ask rules, one test each:
 
 1. Never ask an existing supporter. This is what makes it one-time.
-2. Never ask twice. Declining is a real answer.
+2. Never ask twice in a row. **Reversed 2026-09-09.** This was "never ask twice, ever", which spent
+   the single ask on the first qualifying scan and then went silent even after the app had proved
+   useful ten more times. It is now a cadence of `SupporterPrompt.scansBetweenAsks` scans (3 at time
+   of writing; the number lives only in that constant, so tune it there and this stays true).
+   Counted over scans rather than launches, and a thin read counts even though it does not ask, so
+   the counter measures use rather than asks. Declining is still a real answer for the length of the
+   interval, and rule 1 still means a supporter is never asked again.
 3. **Never ask on a thin read.** If `isLowConfidence` fired, the app is not confident in the ranking
    it just produced, and asking for money on a job it may have done badly is the wrong instinct.
    *This is the rule most worth keeping if anything here is ever cut.*
@@ -285,7 +293,9 @@ routinely causes.
 
 ## 9. Known-good baseline
 
-`swift test` is **316 green**. `Core` contains no monetization SDK code and must still contain none:
+`swift test` is **319 green** (316 until 2026-09-09 part 2, which deleted `testItNeverAsksTwice` —
+it asserted the opposite of the new cadence — and added five: the reset, the whole interval, the ask
+returning, an overshooting counter, and a thin read still refusing however many scans have passed). `Core` contains no monetization SDK code and must still contain none:
 `CoreContracts` and `CoreServices` gained monetization *types and logic*, but no dependency. **If
 `Core` stops building on Linux, the boundary has been broken.**
 

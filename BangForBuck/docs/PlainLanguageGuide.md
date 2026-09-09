@@ -46,7 +46,10 @@ Three things about how that ask works, because they were deliberate choices:
 - **It only appears after the app has actually helped.** If a photo came out badly and the app isn't
   confident in what it read, it doesn't ask you for money. Asking for payment for a job it may have
   done poorly is the wrong instinct.
-- **It asks once.** If you say no, that's a real answer, and it won't come back.
+- **It asks sparingly.** If you say no, that's a real answer. After you've scanned a few more menus
+  it may mention it again, and once you've bought a drink it never asks at all. There's also a
+  Support button on the home screen if you'd rather find it yourself, which is where you restore a
+  previous purchase too.
 - **It never shows you a price it isn't sure about.** The amounts come straight from the App Store in
   your own currency. If it can't reach the store, it says so and offers to try again, rather than
   showing you a number it made up. That's the same rule as the menu prices, applied to our own.
