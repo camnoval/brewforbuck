@@ -35,8 +35,7 @@ struct PaywallView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                        .foregroundStyle(Theme.glass)
+                    closeButton
                 }
             }
         }
@@ -45,13 +44,47 @@ struct PaywallView: View {
 
     // MARK: - Pieces
 
+    /// An X, not "Done".
+    ///
+    /// This sheet arrives uninvited five seconds after a ranking, so the way out should read as
+    /// *dismiss* rather than *confirm*. "Done" is the word for finishing a task somebody chose to
+    /// start; on an unsolicited ask it implies there is something to complete. An X says the only
+    /// true thing: this closes, nothing happens.
+    ///
+    /// It is also the one control present in every state, which is why the terminal states no
+    /// longer carry their own button.
+    private var closeButton: some View {
+        Button {
+            dismiss()
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.inkMuted)
+        }
+        .accessibilityLabel("Close")
+    }
+
+    /// Two short lines instead of one long one.
+    ///
+    /// The first is the promise, and it is the thing most worth being unmissable: the work this app
+    /// does is never behind a payment (`PlainLanguageGuide.md`). The second names what this actually
+    /// is, so nobody has to infer it from three prices.
+    ///
+    /// **"Tip jar", not "donate".** Apple treats collecting charitable donations differently from
+    /// tipping a developer, and this app already carries extra review scrutiny for its alcohol
+    /// context (R3). A tip jar is what `MonetizationPlan.md` §3 describes and what this is.
     private var header: some View {
         VStack(alignment: .leading, spacing: Theme.Space.tight) {
             Wordmark(size: 34)
-            Text("ABV is free and stays free. If it saved you a bad order, you can buy me a drink.")
-                .font(Theme.callout)
-                .foregroundStyle(Theme.inkMuted)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: Theme.Space.hair) {
+                Text("ABV is free, and it stays free.")
+                    .font(Theme.action)
+                    .foregroundStyle(Theme.ink)
+                Text("Nothing is locked. This is just a tip jar.")
+                    .font(Theme.callout)
+                    .foregroundStyle(Theme.inkMuted)
+            }
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -99,8 +132,6 @@ struct PaywallView: View {
                     .font(Theme.callout)
                     .foregroundStyle(Theme.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
-                Button("Done") { dismiss() }
-                    .buttonStyle(PourButtonStyle())
             }
 
         case .thanks(let productIdentifier):
@@ -134,7 +165,7 @@ struct PaywallView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            Text("One time. No subscription.")
+            Text("One time. No subscription. It never expires.")
                 .font(Theme.micro)
                 .foregroundStyle(Theme.inkMuted)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -162,8 +193,6 @@ struct PaywallView: View {
                 .font(Theme.callout)
                 .foregroundStyle(Theme.inkMuted)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("Done") { dismiss() }
-                .buttonStyle(PourButtonStyle())
         }
     }
 
@@ -288,6 +317,11 @@ private struct TierRow: View {
 /// The quiet row that offers the sheet, shown only after a scan that actually produced a ranking.
 ///
 /// Whether it appears at all is `SupporterPrompt.shouldOffer`, in `Core`. This view just draws it.
+///
+/// **Currently unreferenced.** The ask moved to a timed sheet in `ResultsView` because on a
+/// 35-drink menu this row sat forty rows down and almost nobody reached it. Kept rather than
+/// deleted: unlike `AdPresenter` it was written against something real, and it is the obvious
+/// component if a second, quieter surface is ever wanted. Recorded in the Handoff residuals.
 struct SupporterPromptRow: View {
     let action: () -> Void
 

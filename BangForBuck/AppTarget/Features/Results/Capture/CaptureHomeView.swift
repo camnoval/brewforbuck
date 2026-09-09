@@ -34,6 +34,8 @@ struct CaptureHomeView: View {
     /// Two more ways in that need no photo: type a few menu drinks, or compare packages in a store.
     @State private var showQuick = false
     @State private var showCompare = false
+    /// The paywall, opened from the toolbar rather than from the earned prompt.
+    @State private var showSupport = false
     @State private var errorMessage: String?
 
     // Debug OCR export: keep the last scanned image so its raw observations can be dumped to a
@@ -142,6 +144,11 @@ struct CaptureHomeView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .background(Theme.canvas.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    supportButton
+                }
+            }
             .navigationDestination(isPresented: $showResults) {
                 ResultsView(viewModel: viewModel, supporter: supporter)
                     .navigationTitle("Best value")
@@ -155,6 +162,9 @@ struct CaptureHomeView: View {
             .sheet(isPresented: $showCamera) {
                 CameraPicker { image in process(image) }
                     .ignoresSafeArea()
+            }
+            .sheet(isPresented: $showSupport) {
+                PaywallView(store: supporter)
             }
             .sheet(isPresented: Binding(get: { exportText != nil },
                                         set: { if !$0 { exportText = nil } })) {
@@ -177,6 +187,48 @@ struct CaptureHomeView: View {
             // Picks up a purchase made on another device, and a restore done elsewhere in the app.
             .task { await supporter.refresh() }
         }
+    }
+
+    // MARK: - Support
+
+    /// The permanent way to the paywall.
+    ///
+    /// The earned prompt in `ResultsView` is deliberately one-shot: `SupporterPrompt` rule 2 says
+    /// never ask twice, and `markAsked()` fires when the row merely *appears*. That is right for an
+    /// ask, and wrong as the only door, because **`PaywallView` is where Restore Purchases lives.**
+    /// App Review exercises restore on a non-consumable, and without this the restore path is
+    /// reachable exactly once per install. So this is a review requirement, not a second ask.
+    ///
+    /// It does not re-ask anybody: `shouldOffer` still governs the prompt, and a supporter opening
+    /// this sheet lands on the thank-you state rather than the tier list, because the products are
+    /// non-consumables and cannot be bought twice (`MonetizationPlan.md` §3).
+    ///
+    /// **Labelled "Support", not "Donate", and the distinction is defensive.** Apple treats
+    /// charitable donation collection differently from tipping a developer, so a button reading
+    /// "Donate" invites a reviewer to read a tip jar as the former. This app already carries extra
+    /// review scrutiny for its alcohol context (R3). "Support" also matches the entitlement name,
+    /// the badge copy and the App Store product descriptions, so one word does all of it.
+    ///
+    /// Wears the tier motif from `SupporterBadge`: a mug for anyone who has not supported yet, and
+    /// once they have, **their own tier's glyph** — the drop, the mug or the wineglass. Same
+    /// capsule-on-a-wash treatment as the badge, so the two read as one idea. Green, never amber,
+    /// because amber means "this number is an estimate" and nothing else (§11).
+    private var supportButton: some View {
+        Button {
+            showSupport = true
+        } label: {
+            HStack(spacing: Theme.Space.hair) {
+                Image(systemName: supporter.tierKind?.symbolName ?? "mug.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Support")
+                    .font(Theme.micro)
+            }
+            .foregroundStyle(Theme.glass)
+            .padding(.horizontal, Theme.Space.tight)
+            .padding(.vertical, Theme.Space.hair)
+            .background(Theme.wash(Theme.glass), in: Capsule())
+        }
+        .accessibilityLabel(supporter.tierKind == nil ? "Support ABV" : "Your support")
     }
 
     // MARK: - Inputs → the shared load(lines:) seam

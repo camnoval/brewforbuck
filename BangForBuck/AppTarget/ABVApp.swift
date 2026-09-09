@@ -1,24 +1,31 @@
 //
 //  ABVApp.swift
-//  ABV
+//  BangForBuck
 //
 //  Created by Noval, Cameron on 8/25/26.
 //
 
 
 import SwiftUI
-import CoreContracts
 
 @main
 struct ABVApp: App {
 
     /// The `supporter` entitlement, owned here so one read at launch serves the whole app (§A).
+    @StateObject private var supporter: SupporterStore
+
+    /// Configure the SDK before anything can call it, then build the store around the real
+    /// conformer.
     ///
-    /// **This is the one line that changes when the RevenueCat SDK lands.** Swap
-    /// `InMemoryPurchaseController()` for `RevenueCatPurchases()`. Until then purchases are
-    /// simulated: the paywall lays out and previews correctly, but nothing is charged and nothing
-    /// is entitled, so this must not ship as is.
-    @StateObject private var supporter = SupporterStore(purchases: InMemoryPurchaseController())
+    /// Done in `init` rather than as a property default so the ordering is visible: a property
+    /// initializer runs *before* the init body, and "configure before any other SDK call" is a
+    /// documented requirement rather than a preference. Nothing in `SupporterStore.init` touches
+    /// the SDK today, so the property-default form happened to work; this one cannot stop working
+    /// if that changes.
+    init() {
+        RevenueCatPurchases.configure()
+        _supporter = StateObject(wrappedValue: SupporterStore(purchases: RevenueCatPurchases()))
+    }
 
     var body: some Scene {
         WindowGroup {

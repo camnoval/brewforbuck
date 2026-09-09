@@ -18,9 +18,21 @@ struct ResultsView: View {
     @State private var adding = false
     /// Whether the supporter sheet is open.
     @State private var showingPaywall = false
-    
+    /// Pops back to capture, for the "scan it again" action on a thin read.
+    @Environment(\.dismiss) private var dismiss
+    /// Guards the timed invite against a second run when this screen reappears.
+    ///
+    /// `hasAlreadyAsked` in `SupporterStore` is the durable answer and survives launches; this is
+    /// only about the window between the sheet being scheduled and `markAsked()` actually firing,
+    /// which is five seconds wide and would otherwise let a fast back-and-forward queue two.
+    @State private var inviteScheduled = false
+
     var body: some View {
         List {
+            if viewModel.session.isLowConfidence {
+                thinReadSection
+            }
+
             metricSection
 
             rankingSection
@@ -33,11 +45,6 @@ struct ResultsView: View {
 
             if !viewModel.excluded.isEmpty {
                 excludedSection
-            }
-
-            if supporter.shouldOffer(rankedCount: viewModel.ranked.count,
-                                     isLowConfidence: viewModel.session.isLowConfidence) {
-                supporterSection
             }
 
             explainerSection
@@ -70,9 +77,123 @@ struct ResultsView: View {
         .sheet(isPresented: $showingPaywall) {
             PaywallView(store: supporter)
         }
+        .task { await offerSupportIfEarned() }
+    }
+
+    // MARK: - The ask
+
+    /// Offer support a few seconds after a scan that actually worked.
+    ///
+    /// **Why this replaced a row in the list.** The row was correct and unreachable: on a 35-drink
+    /// menu it sat below the ranking, the needs-price bucket, the add-a-drink row and the excluded
+    /// section, roughly forty rows down. `markAsked()` then fired on its appearance, so the one ask
+    /// anybody ever gets was being spent on a row almost nobody scrolled to.
+    ///
+    /// **The decision is still `Core`'s.** All four `SupporterPrompt` rules gate this exactly as
+    /// before: never an existing supporter, never twice, never on a thin read, never without a real
+    /// comparison. Only the *presentation* moved. The delay lives here because a clock is impure
+    /// and `SupporterPrompt` has no business owning one (§7).
+    ///
+    /// **The delay is the point.** Asking the instant the ranking appears asks before the app has
+    /// been useful. Five seconds is long enough to have read the top of the podium, which is what
+    /// the ask is actually predicated on.
+    ///
+    /// Cancelling matters: leaving the screen inside the window cancels the task, so `markAsked()`
+    /// never fires and the ask is still available on the next scan. Somebody who backed out before
+    /// seeing it has not been asked.
+    private func offerSupportIfEarned() async {
+        inviteLog("task started")
+
+        guard !inviteScheduled else {
+            inviteLog("STOP: already scheduled this appearance")
+            return
+        }
+
+        let ranked = viewModel.ranked.count
+        let thin = viewModel.session.isLowConfidence
+        inviteLog("ranked=\(ranked) isLowConfidence=\(thin) "
+                  + "status=\(supporter.status) hasAlreadyAsked=\(supporter.hasAlreadyAsked)")
+
+        guard supporter.shouldOffer(rankedCount: ranked, isLowConfidence: thin) else {
+            inviteLog("STOP: shouldOffer said no")
+            return
+        }
+        inviteScheduled = true
+        inviteLog("waiting \(Self.inviteDelaySeconds)s")
+
+        try? await Task.sleep(for: .seconds(Self.inviteDelaySeconds))
+
+        guard !Task.isCancelled else {
+            inviteLog("STOP: task was cancelled during the wait")
+            return
+        }
+
+        inviteLog("PRESENTING paywall")
+        supporter.markAsked()
+        showingPaywall = true
+    }
+
+    /// How long to sit on the ranking before asking. One number, so it is easy to retune once it
+    /// has been felt on a device.
+    private static let inviteDelaySeconds = 5
+
+    /// DEBUG-only trace for the invite. Follows the same pattern as the OCR export trigger: the
+    /// diagnostic exists, and it does not ship.
+    private func inviteLog(_ message: String) {
+        #if DEBUG
+        print("ABV-INVITE: \(message)")
+        #endif
     }
 
     // MARK: - Sections
+
+    /// The thin-read caveat (C). Sits above everything, because a caveat read after the ranking is
+    /// a caveat read too late.
+    ///
+    /// `MenuQualityGate` has been computing `isLowConfidence` since it shipped and nothing rendered
+    /// it, so a badly-read menu presented a confident-looking podium with no warning: the honest
+    /// behaviour C exists to produce was calculated and then thrown away.
+    ///
+    /// Amber, via `Notice`, and this is the one place that is correct: `Theme.amber` means "this
+    /// number is an estimate" and a ranking drawn from a quarter of the menu is exactly that (§11).
+    ///
+    /// The counts are deliberately from the OCR read and do not move as prices are added by hand.
+    /// The flag is a verdict on the photo, not on the current state of the list; recomputing it live
+    /// would make this banner flicker away mid-edit, which reads as the app changing its mind about
+    /// the scan.
+    private var thinReadSection: some View {
+        Section {
+            Notice(text: thinReadMessage)
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .listRowBackground(Color.clear)
+
+            Button { dismiss() } label: {
+                Label("Scan it again", systemImage: "camera.fill")
+                    .font(.subheadline.weight(.medium))
+            }
+            .tint(.accentColor)
+
+            NavigationLink {
+                QuickCompareView()
+            } label: {
+                Label("Compare two or three by hand", systemImage: "arrow.left.arrow.right")
+                    .font(.subheadline.weight(.medium))
+            }
+        } footer: {
+            Text("Deciding between a couple of drinks? Typing those two or three in is quicker than "
+                 + "correcting a whole menu, and nothing about them is guessed.")
+        }
+    }
+
+    /// Says what was actually missed rather than "low confidence", which is a phrase about our
+    /// internals and tells somebody nothing they can act on. A plain sentence, then two real
+    /// numbers, so the reader can judge for themselves how much of the menu this describes.
+    private var thinReadMessage: String {
+        let quality = viewModel.session.quality
+        return "This scan came out thin. We could only read a price on "
+            + "\(quality.pricedCount) of \(quality.itemCount) lines, so the ranking below describes "
+            + "part of this menu rather than all of it."
+    }
 
     private var metricSection: some View {
         Section {
@@ -150,17 +271,6 @@ struct ResultsView: View {
         } footer: {
             Text("Excluded from the ranking.")
         }
-    }
-
-    /// Shown only after a scan that actually produced a ranking, and only once ever.
-    ///
-    /// `markAsked()` fires on appearance rather than on tap, so scrolling past it counts as having
-    /// been asked. Asking again on the next scan would be nagging.
-    private var supporterSection: some View {
-        Section {
-            SupporterPromptRow { showingPaywall = true }
-        }
-        .onAppear { supporter.markAsked() }
     }
 
     private var explainerSection: some View {
