@@ -30,6 +30,13 @@ struct PaywallView: View {
                     content
                 }
                 .padding(Theme.Space.base)
+                // Fill the sheet's width whatever the state contains.
+                //
+                // Without this the ScrollView sizes itself to its widest child, so the terminal
+                // states collapsed to the width of a line of text once their full-width buttons
+                // were removed, and the sheet's own background showed through down both sides as a
+                // pair of grey bands. The tier list happened to be wide enough to hide the problem.
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .background(Theme.canvas)
             .navigationBarTitleDisplayMode(.inline)
@@ -180,20 +187,33 @@ struct PaywallView: View {
             ?? store.tierKind
             ?? .unspecified
 
-        VStack(alignment: .leading, spacing: Theme.Space.snug) {
-            HStack(spacing: Theme.Space.tight) {
-                Image(systemName: kind.symbolName)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(Theme.glass)
-                Text(kind.thanksHeadline)
-                    .font(Theme.title)
-                    .foregroundStyle(Theme.ink)
-            }
-            Text("That is it, forever. ABV will not ask again.")
+        // Centred, and the only state in the sheet that is. Everything else is a list of things
+        // to read or tap; this is a moment, so it gets the middle of the screen.
+        VStack(spacing: Theme.Space.snug) {
+            ContributorMark(kind: kind)
+                .padding(.bottom, Theme.Space.hair)
+
+            Text(kind.thanksHeadline)
+                .font(Theme.title)
+                .foregroundStyle(Theme.ink)
+
+            // The tier, in its own metal: bronze for a shot, silver for a pint, gold for a round.
+            Text(kind.contributorTitle)
+                .font(Theme.display(19, .heavy))
+                .foregroundStyle(kind.metal)
+
+            // Short on purpose. The two lines above already name what they bought, and rule 1
+            // means this person is never asked again, so spelling that out is a promise nobody
+            // needs reading at the moment they have just been generous.
+            Text("We appreciate it.")
                 .font(Theme.callout)
                 .foregroundStyle(Theme.inkMuted)
-                .fixedSize(horizontal: false, vertical: true)
         }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
+        .padding(.top, Theme.Space.wide)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(kind.thanksHeadline). \(kind.contributorTitle). We appreciate it.")
     }
 
     private func restoreButton(isBusy: Bool) -> some View {

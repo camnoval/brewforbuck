@@ -162,9 +162,9 @@ struct RankMedal: View {
 
     private var fill: Color {
         switch rank {
-        case 1: return Color(red: 0.83, green: 0.63, blue: 0.16)   // gold
-        case 2: return Color(red: 0.66, green: 0.68, blue: 0.70)   // silver
-        case 3: return Color(red: 0.72, green: 0.45, blue: 0.20)   // bronze
+        case 1: return Theme.gold
+        case 2: return Theme.silver
+        case 3: return Theme.bronze
         default: return Theme.wash(Theme.inkMuted)
         }
     }

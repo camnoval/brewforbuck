@@ -72,12 +72,94 @@ extension SupporterTierKind {
         case .unspecified: return "Thanks for supporting ABV"
         }
     }
+
+    /// The rank the tier earns, in the same metals as the podium.
+    ///
+    /// Cheapest tier is bronze and the dearest is gold, which is the obvious reading and the same
+    /// order `RankMedal` uses. `.unspecified` gets bottle green rather than a metal, because a tier
+    /// this build does not recognize has no place in the ordering and guessing one would be a
+    /// fabricated rank.
+    var metal: Color {
+        switch self {
+        case .shot: return Theme.bronze
+        case .pint: return Theme.silver
+        case .round: return Theme.gold
+        case .unspecified: return Theme.glass
+        }
+    }
+
+    /// The line under the thank-you, in that tier's metal.
+    var contributorTitle: String {
+        switch self {
+        case .shot: return "Shot Contributor"
+        case .pint: return "Pint Contributor"
+        case .round: return "Round Contributor"
+        case .unspecified: return "Contributor"
+        }
+    }
+}
+
+/// The big mark on the thank-you screen.
+///
+/// Separate from `symbolName` because **a round is not one drink.** SF Symbols has no clinking-mugs
+/// glyph (searched 2026-09-09; the 🍻 emoji exists but cannot be tinted, so it could not be gold),
+/// so the round is composed from two `mug.fill` leaning into each other. That gives the tiers an
+/// honest progression: a drop, a mug, two mugs.
+///
+/// `symbolName` is still the single glyph, and the small badge and toolbar button keep using it: two
+/// overlapped mugs at 11pt would be mush, and the round needs to stay distinguishable from the pint
+/// at that size.
+struct ContributorMark: View {
+    let kind: SupporterTierKind
+    var size: CGFloat = 68
+
+    var body: some View {
+        Group {
+            if kind == .round {
+                HStack(spacing: -size * 0.13) {
+                    Image(systemName: "mug.fill")
+                        // The **left** mug is the mirrored one. `mug.fill` draws its handle on the
+                        // right, so flipping the right mug put both handles in the middle, facing
+                        // each other; flipping the left one puts them on the outside where a pair
+                        // of mugs actually has them.
+                        .scaleEffect(x: -1)
+                        .rotationEffect(.degrees(12))
+                    Image(systemName: "mug.fill")
+                        .rotationEffect(.degrees(-12))
+                }
+                .font(.system(size: size * 0.76, weight: .semibold))
+            } else {
+                Image(systemName: kind.symbolName)
+                    .font(.system(size: size, weight: .semibold))
+            }
+        }
+        .foregroundStyle(kind.metal)
+        // The surrounding text already says the tier and the thanks, so this is decoration to a
+        // screen reader.
+        .accessibilityHidden(true)
+    }
 }
 
 #Preview("Every tier") {
     VStack(alignment: .leading, spacing: Theme.Space.snug) {
         ForEach(SupporterTierKind.allCases, id: \.self) { kind in
             SupporterBadge(kind: kind)
+        }
+    }
+    .padding(Theme.Space.loose)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Theme.canvas)
+}
+
+#Preview("Every contributor mark") {
+    VStack(spacing: Theme.Space.wide) {
+        ForEach(SupporterTierKind.allCases, id: \.self) { kind in
+            VStack(spacing: Theme.Space.tight) {
+                ContributorMark(kind: kind, size: 56)
+                Text(kind.contributorTitle)
+                    .font(Theme.display(19, .heavy))
+                    .foregroundStyle(kind.metal)
+            }
         }
     }
     .padding(Theme.Space.loose)

@@ -20,12 +20,11 @@ struct ResultsView: View {
     @State private var showingPaywall = false
     /// Pops back to capture, for the "scan it again" action on a thin read.
     @Environment(\.dismiss) private var dismiss
-    /// Guards the timed invite against a second run when this screen reappears.
+    /// Guards against evaluating this screen's scan twice.
     ///
-    /// `hasAlreadyAsked` in `SupporterStore` is the durable answer and survives launches; this is
-    /// only about the window between the sheet being scheduled and `markAsked()` actually firing,
-    /// which is five seconds wide and would otherwise let a fast back-and-forward queue two.
-    @State private var inviteScheduled = false
+    /// Two reasons it matters: the scan must be counted exactly once, and the five-second window
+    /// before `markAsked()` fires would otherwise let a fast back-and-forward queue two sheets.
+    @State private var scanEvaluated = false
 
     var body: some View {
         List {
@@ -89,10 +88,10 @@ struct ResultsView: View {
     /// section, roughly forty rows down. `markAsked()` then fired on its appearance, so the one ask
     /// anybody ever gets was being spent on a row almost nobody scrolled to.
     ///
-    /// **The decision is still `Core`'s.** All four `SupporterPrompt` rules gate this exactly as
-    /// before: never an existing supporter, never twice, never on a thin read, never without a real
-    /// comparison. Only the *presentation* moved. The delay lives here because a clock is impure
-    /// and `SupporterPrompt` has no business owning one (§7).
+    /// **The decision is still `Core`'s.** All four `SupporterPrompt` rules gate this: never an
+    /// existing supporter, not until `scansBetweenAsks` scans have passed, never on a thin read,
+    /// never without a real comparison. Only the *presentation* and the clock live here, because a
+    /// clock is impure and `SupporterPrompt` has no business owning one (§7).
     ///
     /// **The delay is the point.** Asking the instant the ranking appears asks before the app has
     /// been useful. Five seconds is long enough to have read the top of the podium, which is what
@@ -104,21 +103,25 @@ struct ResultsView: View {
     private func offerSupportIfEarned() async {
         inviteLog("task started")
 
-        guard !inviteScheduled else {
-            inviteLog("STOP: already scheduled this appearance")
+        guard !scanEvaluated else {
+            inviteLog("STOP: this scan was already evaluated")
             return
         }
+        scanEvaluated = true
+
+        // Counted before the rules are consulted, so a thin read still moves the cadence along.
+        supporter.recordScan()
 
         let ranked = viewModel.ranked.count
         let thin = viewModel.session.isLowConfidence
-        inviteLog("ranked=\(ranked) isLowConfidence=\(thin) "
-                  + "status=\(supporter.status) hasAlreadyAsked=\(supporter.hasAlreadyAsked)")
+        inviteLog("ranked=\(ranked) isLowConfidence=\(thin) status=\(supporter.status) "
+                  + "scansSinceLastAsk=\(supporter.scansSinceLastAsk)"
+                  + "/\(SupporterPrompt.scansBetweenAsks)")
 
         guard supporter.shouldOffer(rankedCount: ranked, isLowConfidence: thin) else {
             inviteLog("STOP: shouldOffer said no")
             return
         }
-        inviteScheduled = true
         inviteLog("waiting \(Self.inviteDelaySeconds)s")
 
         try? await Task.sleep(for: .seconds(Self.inviteDelaySeconds))

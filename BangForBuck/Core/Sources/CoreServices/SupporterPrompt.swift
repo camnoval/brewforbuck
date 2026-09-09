@@ -24,12 +24,30 @@ public enum SupporterPrompt {
     /// with a flourish would be overselling.
     public static let minimumRatioWorthMentioning = 1.25
 
+    /// How many scans must pass before the app asks again.
+    ///
+    /// **This replaced "never ask twice", and the reversal is deliberate** (2026-09-09). The old
+    /// rule spent the single ask on the first qualifying scan and then went quiet forever, which
+    /// meant somebody who dismissed the sheet while walking into a bar was never asked again even
+    /// after the app had proved useful ten more times. A cadence keeps the ask earned while giving
+    /// it more than one chance to land.
+    ///
+    /// Three is chosen to be quiet rather than tuned: at one scan per bar visit it is roughly once a
+    /// month for a regular user, and it is a number rather than a schedule so there is one place to
+    /// change it. Nothing else in the design moved: a supporter is still never asked, a thin read
+    /// still never asks, and the sheet is still dismissible with no consequence.
+    ///
+    /// Note that a thin read **counts as a scan** even though it does not ask. The counter measures
+    /// how much use the app has had, not how many times it has begged.
+    public static let scansBetweenAsks = 3
+
     /// Whether to offer the supporter prompt after a scan.
     ///
     /// Four rules, in order of how much they matter:
     ///
-    /// 1. **Never ask a supporter.** They already paid. This is what makes it one-time.
-    /// 2. **Never ask twice.** Declining is a real answer, and the caller persists that.
+    /// 1. **Never ask a supporter.** They already paid. This is what makes the purchase one-time.
+    /// 2. **Never ask twice in a row.** `scansSinceLastAsk` is persisted by the caller and reset
+    ///    when the sheet is shown, so an ask has to be earned again by using the app.
     /// 3. **Never ask on a thin read.** If `isLowConfidence` fired, the app is not confident in the
     ///    ranking it just produced, and asking for money on a job it may have done badly is the
     ///    wrong instinct. This is the rule most worth keeping when something has to give.
@@ -39,10 +57,10 @@ public enum SupporterPrompt {
         rankedCount: Int,
         isLowConfidence: Bool,
         status: SupporterStatus,
-        hasAlreadyAsked: Bool
+        scansSinceLastAsk: Int
     ) -> Bool {
         guard !status.isActive else { return false }
-        guard !hasAlreadyAsked else { return false }
+        guard scansSinceLastAsk >= scansBetweenAsks else { return false }
         guard !isLowConfidence else { return false }
         guard rankedCount >= minimumRankedDrinks else { return false }
         return true

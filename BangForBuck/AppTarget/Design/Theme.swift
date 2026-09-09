@@ -38,6 +38,25 @@ enum Theme {
     static let ink = adaptive(light: 0x0F1713, dark: 0xE9F0EA)
     static let inkMuted = adaptive(light: 0x55665D, dark: 0x8FA398)
 
+    // MARK: The metals
+    //
+    // The podium, and the supporter tiers. Two uses of one set: rank 1/2/3 in `RankMedal`, and
+    // shot/pint/round on the supporter badge. They never share a screen, so the signal stays
+    // legible — but note this is the sort of second meaning §11 warns about, and a third use
+    // would be one too many.
+    //
+    // **Deliberately not `adaptive`.** These are the exact values `RankMedal` has always drawn,
+    // kept identical so moving them here changes nothing on screen. An adaptive gold would also
+    // drift toward `amber` in light mode, which is the muddying the doc comment on `amber`
+    // exists to prevent.
+
+    /// Rank 1, and the round tier.
+    static let gold = Color(red: 0.83, green: 0.63, blue: 0.16)
+    /// Rank 2, and the pint tier.
+    static let silver = Color(red: 0.66, green: 0.68, blue: 0.70)
+    /// Rank 3, and the shot tier.
+    static let bronze = Color(red: 0.72, green: 0.45, blue: 0.20)
+
     /// A hairline that reads as an edge, not a shadow.
     static var hairline: Color { inkMuted.opacity(0.22) }
     /// The wash behind a chip. One value, so chips never drift apart.
