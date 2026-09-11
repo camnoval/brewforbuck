@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  ABV — app privacy manifest.
+
+	  Two jobs. It declares the required-reason APIs the app touches (UserDefaults, for the 21+ gate
+	  and the supporter scan counter), and it declares the one data type that leaves the device.
+
+	  Nothing here is about the menu. Vision runs on-device, photos are never uploaded, and no
+	  ranking, price or drink name is transmitted anywhere. The only thing that leaves is a purchase
+	  receipt going to RevenueCat, against an anonymous identifier.
+	-->
+
+	<!-- No tracking, no ad SDK, no ad network, no IDFA. See docs/AdsPlan.md. -->
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array>
+		<dict>
+			<!--
+			  Purchase history, collected by RevenueCat. Apple requires this disclosed even when it
+			  is not tied to a user's identity.
+
+			  RevenueCat ships its own manifest declaring the same thing, so strictly this entry is
+			  belt-and-braces. It is here anyway because the app is the publisher and the
+			  accountability is the app's.
+			-->
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypePurchaseHistory</string>
+
+			<!-- Not linked to identity: the SDK is configured with an anonymous app user ID, there
+			     is no account, no sign-in and no custom user ID anywhere in the app. -->
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+
+			<!-- The two RevenueCat documents as the minimum for any app using the SDK: App
+			     Functionality covers receipt validation and entitlements, Analytics covers the
+			     dashboard's customer history and charts. -->
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+				<string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
+			</array>
+		</dict>
+	</array>
+
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<!--
+			  UserDefaults. Three values, all written by this app and read only by this app: the 21+
+			  confirmation, whether the supporter prompt has been shown, and how many scans since.
+			  No app group, no shared container, nothing read from another app.
+
+			  CA92.1 is the reason code for accessing user defaults to read and write information
+			  accessible only to the app itself.
+			-->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

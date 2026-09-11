@@ -32,8 +32,6 @@ struct ResultsView: View {
                 thinReadSection
             }
 
-            metricSection
-
             rankingSection
 
             if !viewModel.needsPrice.isEmpty {
@@ -198,18 +196,16 @@ struct ResultsView: View {
             + "part of this menu rather than all of it."
     }
 
-    private var metricSection: some View {
-        Section {
-            Picker("Rank by", selection: $viewModel.metric) {
-                ForEach(ValueMetric.allCases, id: \.self) { metric in
-                    Text(metric.displayName).tag(metric)
-                }
-            }
-            .pickerStyle(.segmented)
-            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-            .listRowBackground(Color.clear)
-        }
-    }
+    // The metric picker was here.
+    //
+    // **Removed 2026-09-09: calories are not ready for the public.** `ValueMetric.caloriesPerDollar`
+    // and its half of `ValueRanker` stay in `Core`, tested, because they are the v2 metric and the
+    // §14 recipe depends on them — this is a decision about what to *offer*, not a retraction of the
+    // engine. R4 is the reason: an alcohol-only kcal lower bound needs heavy flagging that does not
+    // exist yet, and shipping it unflagged would put a number on screen the app cannot stand behind.
+    //
+    // `ResultsViewModel.metric` stays and still drives `RankRow`, so restoring this is re-adding one
+    // `Section` rather than rebuilding a feature.
 
     private var rankingSection: some View {
         Section {
@@ -219,7 +215,11 @@ struct ResultsView: View {
             } else {
                 ForEach(viewModel.ranked) { item in
                     Button { editing = item.drink } label: {
-                        RankRow(item: item, metric: viewModel.metric)
+                        // `ranked` is sorted best-first, so the head is the yardstick every
+                        // pour line fills against.
+                        RankRow(item: item,
+                                best: viewModel.ranked.first?.value ?? item.value,
+                                metric: viewModel.metric)
                     }
                     .buttonStyle(.plain)
                     .swipeActions(edge: .trailing) {
@@ -295,6 +295,8 @@ struct ResultsView: View {
 
 private struct RankRow: View {
     let item: RankedEditable
+    /// The best value on the current list, for the pour line's fill.
+    let best: Double
     let metric: ValueMetric
 
     private var drink: EditableDrink { item.drink }
@@ -332,10 +334,12 @@ private struct RankRow: View {
             Spacer(minLength: 8)
 
             VStack(alignment: .trailing, spacing: 4) {
-                Text(valueText)
-                    .font(.title3.weight(.bold))
-                    .monospacedDigit()
-                    .foregroundStyle(Color.accentColor)
+                // `ValueFigure` rather than a bare number: the list is already ranked, so the
+                // question the eye asks next is *by how much*. A podium states the order and hides
+                // the margin, which on a flat menu overstates the win and on a lopsided one
+                // understates it. The bar is the same number the app already computed, made
+                // comparable at a glance.
+                ValueFigure(value: item.value, best: best, unit: unit)
                 if let price = drink.price {
                     PricePill(dollars: price.dollars, caption: "menu price")
                 }
@@ -345,10 +349,12 @@ private struct RankRow: View {
         .contentShape(Rectangle())
     }
 
-    private var valueText: String {
+    /// The small grey unit beside the figure. Kept as a switch even though only one metric is
+    /// offered in v1, so the label cannot drift from the number if the other one returns.
+    private var unit: String {
         switch metric {
-        case .standardDrinksPerDollar: return String(format: "%.2f/$", item.value)
-        case .caloriesPerDollar:       return String(format: "%.0f cal/$", item.value)
+        case .standardDrinksPerDollar: return "per $"
+        case .caloriesPerDollar:       return "cal / $"
         }
     }
 

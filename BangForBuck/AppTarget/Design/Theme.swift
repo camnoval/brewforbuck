@@ -176,7 +176,11 @@ struct ValueFigure: View {
     }
 }
 
-/// A hairline channel with the filled portion in amber. Reads as liquid to a level.
+/// A hairline channel with the filled portion in bottle green. Reads as liquid to a level.
+///
+/// **Not amber, and the comment used to say otherwise.** `Theme.amber` means "this number is an
+/// estimate" and nothing else (§11), so a bar that appears beside *every* value — measured ones
+/// included — cannot wear it. Same reason the value figure itself is `Theme.glass`.
 struct PourLine: View {
     let fraction: Double
 
