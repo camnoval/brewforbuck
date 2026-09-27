@@ -33,4 +33,13 @@ public struct MenuItem: Equatable, Hashable, Sendable {
 
     /// A parsed line with no price to rank on.
     public var needsPrice: Bool { price == nil }
+
+    /// Same item under a different category. Used by `CategoryInference` to hand a headerless
+    /// page's evident subject to the items that didn't classify themselves; everything the menu
+    /// actually printed is carried through untouched.
+    public func withCategory(_ newCategory: BeverageCategory) -> MenuItem {
+        MenuItem(name: name, price: price, readABV: readABV, readSize: readSize,
+                 category: newCategory, descriptionText: descriptionText)
+    }
+
 }

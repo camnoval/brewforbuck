@@ -5,7 +5,105 @@ here — keep this lean. Newest note on top; each new note says plainly what it 
 
 ---
 
-## ⇢ STATUS (2026-09-27 part 3) — Prior art, then the free half of it implemented
+## ⇢ STATUS (2026-09-27 part 4) — Rescan measured; four fixes from what it showed
+
+**Adds to part 3.** The rescan settled the open questions. Nothing compiled.
+
+### 1. The old menu is solved, and it was the capture
+
+`RECTIFY` fired: 765×1020 → 569×1449, corner displacement 0.243. Aspect went 0.75 → 0.393 and the
+page curl went with it. Result on the ROTATING tap list:
+
+    # quality: 20/21 priced (95.2%)
+    # ABV provenance among ranked: 20 read, 0 estimated
+
+From 0 of 22 to 20 of 22, **every ABV read rather than estimated**. The document camera wasn't even
+needed — rectifying a library photo was enough, which means the camera path will do at least this
+well. The never-overwrite rule in `adoptingAttributes` also earned its place: two orphaned name rows
+were absorbed as descriptions into the beer above, and Yuengling kept its own 4.5% instead of taking
+Sam Adams' 6%.
+
+### 2. Vision had the right price in candidate 2 all along
+
+The log settles part 3 §2 in favour of candidate selection, and against the leading-`5` heuristic:
+
+    [1] ANGRY ORCHARD CRISP APPLE 39   [2] ...59        [3] ...$9
+    [1] COLD BREW MARTINI 313          [2] ...$13
+    [1] IC UGHT 59                     [2] IC UGHT $9
+    [1] QUINNESS 14                    [2] QUINNESS $4
+
+`VisionTextRecognizer.preferredCandidate` now promotes a lower-ranked reading **only** when the top
+one has no currency-anchored price and a lower one does. It can never invent a price — only promote
+a reading Vision already produced — and it cannot touch a line whose top reading already has a `$`.
+Where no candidate has one (`STRAWBERRY DAIQUIRI 31 / 30 / 39`) nothing changes.
+
+This is why the heuristic wasn't built: a leading-`5`-strip would have to decide on its own that
+`59` means `$9`, and a real `$59` bottle would be its victim.
+
+### 3. The selector was optimizing a proxy that rewarded wrong prices
+
+It picked the no-correction reading 40 priced to 37 — but several of those 40 were `$38`, `$39`,
+`$31`, `$4`, which are what OCR made of `$8`, `$9`, `$3`, `$14`. More prices is not more correct
+prices. `MenuReadSelection.Score` now leads with `anchored`: lines carrying a `$` attached to a
+number, which is the only evidence available that a number was meant as money. Then priced, then
+leaner, then first candidate.
+
+### 4. Nearest member, not last member
+
+Rows 4 and 6 of the rectified list lost their price by **0.0086 and 0.0091** against a tolerance of
+0.00825. Chaining to the row's rightmost box let drift accumulate across the row, and a right-aligned
+price doesn't sit on the drifted baseline — it sits near where the row *started*. Row 4's price is
+0.0028 from `ADAMS` and 0.0086 from `ABV`. Chaining now links to the **nearest** member of a row,
+which is what Docstrum actually does; taking the last member was the simplification that cost two
+prices. Corpus effect unchanged: 6/8, same two non-regressions as part 2 §3.
+
+### 5. Headerless pages: `CategoryInference`
+
+The tap list has no section header, so everything that didn't brand-match came out `.unknown`, whose
+default pour is a generic 6 oz. Platform Martian at 8.6% and $9 ranked **#18 of 20** on an assumed
+six-ounce pour. Sixteen items on that page *were* classified, twelve of them beer, by brand match
+alone — the page had already said what it was.
+
+When a **majority** of classified items agree, unknowns inherit that category. A plurality would let
+a four-beer/three-wine/three-cocktail page impose beer on everything unrecognized, which is a guess
+dressed as knowledge; a majority means it only fires where the subject is evident and the header was
+missing rather than absent. Floor of four classified items. `.nonAlcoholic` is never inherited —
+that distinction has to be read, not inferred. Classified items are never reclassified.
+
+### 6. Naming: one exact word pays for its neighbour's edit
+
+`BUO LIGHT` is Bud Light off a 574 px menu. `LIGHT` folds exactly, so `windowDistance` now allows a
+word to exceed its own cap when **another word in the window matched exactly** and the total still
+fits the brand budget. The exact anchor is the guard: `BUD`→`BUSCH` is two edits, over budget, so
+beers still can't cross into each other, and a window with no exact word anywhere is refused rather
+than assembled from guesses. Also gains `STELLA AXTOIS` and `QUINNESS`. Re-measured: 0 false
+positives across the 27-line non-brand set plus the new menu's cocktails.
+
+### 7. `RecognizeDocumentsRequest` lost, decisively
+
+**0 tables on both menus.** 117 and 44 paragraphs, 2 lists, no tables. Its readings scored 33/98 and
+1/6 and lost both times. Part 1 §3's argument — "the tap list *is* a three-column table" — was wrong
+about what Apple's model reports. It currently costs an extra on-device Vision pass per scan for
+nothing, twice per scan. **Left in deliberately, not yet gated**, because it might still win on a
+menu that really is a grid and that is a product call, not a code one.
+
+### 8. Still open
+
+- The new Shorty's card is capped by its source: 574 px wide for three columns gives
+  `SEIALAMHCAD LLTRA`, `MARO UNDER PRESSURE`, `SMOR "TEA"`. No parser fixes that, and
+  `OCRNameRepair` correctly declines to reach that far. **It needs a full-resolution camera scan
+  before anything else is tuned against it.** Real structural progress there though: `ON TAP` is now
+  recognized, the columns separated, and the `wineGlass` contamination is gone — every beer is
+  `draftBeer` and the 12% ABV / 5 oz nonsense from part 2 is gone.
+- `Tooling/Data/beverages.json` is missing beers this app will keep meeting: IC Light, IC Light
+  Mango, Brewdog Elvis AF, Victory Sour Monkey, Penn Brewery Weizen, Platform, Helltown, Evergrain,
+  North Country, East End. That is lexicon coverage, not menu-specific tuning — but it is data work
+  and should be done as data work.
+- Breuel gutters and Docstrum-derived tolerances (part 3 §6) remain the real generalization.
+- The pre-existing word-boundary bug in the brand tier (part 3 §5) is still there.
+
+---
+
 
 **Adds to part 2; supersedes nothing.** Went looking for how document analysis and other scanning
 apps solve these problems before implementing my own fixes, which was the right order: two of my

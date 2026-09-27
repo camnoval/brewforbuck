@@ -53,6 +53,26 @@ final class MenuReadSelectionTests: XCTestCase {
         XCTAssertEqual(MenuReadSelection.best(of: [b, a]), b)
     }
 
+    /// The 09-27 regression: counting priced drinks alone picked the reading with MORE prices and
+    /// WORSE ones. `$38` and `$39` are what OCR made of `$8` and `$9`; a printed `$` is the only
+    /// evidence a number was meant as money, so anchored lines rank first even when that means
+    /// choosing the reading with fewer priced drinks.
+    func testACurrencySymbolOutranksASecondBareNumberPrice() {
+        let mangled = ["Bud Light 38", "Corona 38", "Yuengling 39", "Busch Light 36"]
+        let anchored = ["Bud Light $8", "Corona $8", "Yuengling $9"]
+        XCTAssertGreaterThan(MenuReadSelection.score(anchored).anchored,
+                             MenuReadSelection.score(mangled).anchored)
+        XCTAssertEqual(MenuReadSelection.best(of: [mangled, anchored]), anchored)
+    }
+
+    func testAnchoredCountsOnlyASymbolAttachedToANumber() {
+        XCTAssertTrue(MenuReadSelection.containsAnchoredPrice("Guinness $9"))
+        XCTAssertTrue(MenuReadSelection.containsAnchoredPrice("Guinness $ 9"))
+        XCTAssertFalse(MenuReadSelection.containsAnchoredPrice("Guinness 9"))
+        XCTAssertFalse(MenuReadSelection.containsAnchoredPrice("Guinness S9"))
+        XCTAssertFalse(MenuReadSelection.containsAnchoredPrice("cash only $"))
+    }
+
     func testNoCandidatesIsEmptyRatherThanACrash() {
         XCTAssertEqual(MenuReadSelection.best(of: []), [])
     }

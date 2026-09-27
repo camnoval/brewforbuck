@@ -108,34 +108,41 @@ enum OCRNameRepair {
 
     // MARK: - Word alignment
 
-    /// Total edits to read `menu` as `brand`, word for word, or `nil` if any word is too far off.
+    /// Total edits to read `menu` as `brand`, word for word, or `nil` if it can't be read that way.
+    ///
+    /// A word may exceed its own cap **only if another word in the window matched exactly** and the
+    /// running total still fits the brand's budget. That is what lets `BUO LIGHT` reach Bud Light:
+    /// `ught` is exact, so the single edit in `buo`→`bud` is affordable even though a three-letter
+    /// word normally gets no edits at all. The exact-match requirement is what keeps it honest —
+    /// `BUD LIGHT` still can't reach Busch Light (two edits in `bud`→`busch`, over the budget of 1),
+    /// and a window with no exact word anywhere is refused outright rather than assembled from
+    /// guesses.
     private static func windowDistance(menu: [[Character]], brand: [[Character]], multiword: Bool) -> Int? {
         var total = 0
+        var exactMatches = 0
+        var relaxed = 0
         for index in menu.indices {
-            guard let distance = wordDistance(menu[index], brand[index],
-                                              isLast: index == menu.count - 1,
-                                              multiword: multiword)
-            else { return nil }
-            total += distance
+            let a = menu[index]
+            let b = brand[index]
+            if a == b {
+                exactMatches += 1
+                continue
+            }
+            // A tail word may be an abbreviation: "60 MIN" for "60 Minute".
+            if index == menu.count - 1, multiword, a.count >= 3, b.count > a.count,
+               Array(b.prefix(a.count)) == a {
+                continue
+            }
+            let distance = editDistance(a, b)
+            if distance <= wordBudget(max(a.count, b.count)) {
+                total += distance
+            } else {
+                total += distance
+                relaxed += 1
+            }
         }
+        if relaxed > 0, exactMatches == 0 { return nil }
         return total
-    }
-
-    private static func wordDistance(
-        _ menu: [Character],
-        _ brand: [Character],
-        isLast: Bool,
-        multiword: Bool
-    ) -> Int? {
-        if menu == brand { return 0 }
-        // A tail word may be an abbreviation: "60 MIN" for "60 Minute". Only at the tail, and only
-        // for a multi-word brand — otherwise "BUD" reads as Budweiser and "RED" as Redd's.
-        if isLast, multiword, menu.count >= 3, brand.count > menu.count,
-           Array(brand.prefix(menu.count)) == menu {
-            return 0
-        }
-        let distance = editDistance(menu, brand)
-        return distance <= wordBudget(max(menu.count, brand.count)) ? distance : nil
     }
 
     /// Edits allowed within one word of `length` characters.

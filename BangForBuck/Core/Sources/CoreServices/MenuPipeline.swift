@@ -41,7 +41,13 @@ public struct MenuPipeline {
         // travels the `needsPrice` path instead of ranking on a misread ("7-Up 415" at $415). Applied
         // here rather than in either caller because `analyze` delegates to this method, so both paths
         // see identical data by construction (§10).
-        let items = PricePlausibility.withdrawingImplausiblePrices(parser.parse(lines))
+        // A page with no section header leaves everything that didn't brand-match at `.unknown`,
+        // whose default pour is a generic 6 oz — which buried four real beers on the Shorty's tap
+        // list. When a majority of the classified items agree, the unknowns inherit that category.
+        // Applied before enrichment so `DrinkResolver` sees the inferred category, and before the
+        // quality gate so the count it reports matches what the person sees.
+        let items = CategoryInference.applyingPageCategory(
+            to: PricePlausibility.withdrawingImplausiblePrices(parser.parse(lines)))
         // Parse order gives each drink a stable id for inline correction.
         for (index, item) in items.enumerated() {
             let (drink, excludedName) = DrinkResolver.resolve(item, id: index, knowledge: knowledge)

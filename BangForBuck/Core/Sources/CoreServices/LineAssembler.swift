@@ -464,12 +464,20 @@ public enum LineAssembler {
     /// What is stable is the step between neighbours. Adjacent words in one printed row stay close
     /// however far the row's two ends have drifted apart — the largest neighbour step on that page
     /// is 0.0044, half the tolerance, while the gap to the row above is ~0.032. So each box chains
-    /// onto whichever open row's rightmost member is nearest in y. The tolerance is unchanged; only
-    /// what it is measured *from* changes, so there is nothing new to tune.
+    /// onto whichever open row has a member **nearest** to it in y. The tolerance is unchanged;
+    /// only what it is measured *from* changes, so there is nothing new to tune.
+    ///
+    /// **Nearest member, not last member.** Measuring against the row's rightmost box lets drift
+    /// accumulate across the row, and a right-aligned price does not sit on the drifted baseline —
+    /// it sits near where the row *started*. On the rectified tap list, rows 4 and 6 lost their
+    /// price by 0.0086 and 0.0091 against a tolerance of 0.00825: measured against the last word
+    /// they were out, measured against the nearest word (`ADAMS`, 0.0028 away) they were never in
+    /// doubt. This is also what Docstrum actually does — nearest-neighbour linkage — and taking the
+    /// last member was the simplification that cost two prices.
     ///
     /// The anchor's real job — stopping a chain from walking down a column and swallowing the page —
     /// is still done, by x. Boxes are consumed left to right and each joins exactly one row, so a
-    /// stack of right-aligned prices has no left neighbour at a similar y to chain onto and cannot
+    /// stack of right-aligned prices has no neighbour at a similar y to chain onto and cannot
     /// absorb anything.
     private static func assembleRows(
         _ observations: [TextObservation],
@@ -483,8 +491,10 @@ public enum LineAssembler {
             var bestIndex: Int?
             var bestDelta = Double.greatestFiniteMagnitude
             for (index, row) in rows.enumerated() {
-                guard let last = row.last else { continue }
-                let delta = abs(observation.box.midY - last.box.midY)
+                var delta = Double.greatestFiniteMagnitude
+                for member in row {
+                    delta = min(delta, abs(observation.box.midY - member.box.midY))
+                }
                 if delta <= tolerance, delta < bestDelta {
                     bestDelta = delta
                     bestIndex = index

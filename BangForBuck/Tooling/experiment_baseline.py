@@ -45,7 +45,7 @@ def chained_rows(observations: list, tolerance: float) -> list:
     for obs in ordered:
         best, best_dy = None, None
         for row in rows:
-            dy = abs(obs.box.midY - row[-1].box.midY)
+            dy = min(abs(obs.box.midY - m.box.midY) for m in row)
             if dy <= tolerance and (best_dy is None or dy < best_dy):
                 best, best_dy = row, dy
         if best is None:

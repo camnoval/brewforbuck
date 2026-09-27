@@ -77,7 +77,7 @@ struct VisionTextRecognizer: TextRecognizer {
                     // same row are rejoined there by vertical position, reproducing the original line.
                     var observations: [TextObservation] = []
                     for result in results {
-                        guard let candidate = result.topCandidates(1).first else { continue }
+                        guard let candidate = Self.preferredCandidate(of: result) else { continue }
                         let string = candidate.string
                         var wordCount = 0
                         for range in Self.wordRanges(in: string) {
@@ -132,7 +132,7 @@ struct VisionTextRecognizer: TextRecognizer {
                     let assembled = LineAssembler.lines(from: observations)
                     var candidates = "# Vision line candidates (confidence, text):\n"
                     for result in results {
-                        if let candidate = result.topCandidates(1).first {
+                        if let candidate = Self.preferredCandidate(of: result) {
                             candidates += "  \(String(format: "%.2f", candidate.confidence))  \(candidate.string)\n"
                         }
                     }
@@ -193,6 +193,55 @@ struct VisionTextRecognizer: TextRecognizer {
                 }
             }
         }
+    }
+
+    // MARK: - Choosing among Vision's candidates
+
+    /// Vision ranks several readings of each line and this file used to keep only the first, which
+    /// threw away the answer to the `$`→`5` problem. From the 09-27 device log, with the correct
+    /// reading sitting in position 2 or 3:
+    ///
+    ///     [1] ANGRY ORCHARD CRISP APPLE 39   [2] ...59        [3] ...$9
+    ///     [1] COLD BREW MARTINI 313          [2] ...$13
+    ///     [1] IC UGHT 59                     [2] IC UGHT $9
+    ///     [1] QUINNESS 14                    [2] QUINNESS $4
+    ///
+    /// So the repair does not need to guess. **If the top reading has no currency-anchored price and
+    /// a lower-ranked one does, prefer that one.** The rule can only ever *promote a reading Vision
+    /// already produced*, never invent a price, and it cannot touch a line whose top reading already
+    /// has a `$` — `BUSCH LIGHT $6` and `$35` are left exactly as they were. Where no candidate has
+    /// a `$` at all (`STRAWBERRY DAIQUIRI 31 / 30 / 39`) nothing changes and the bare-number
+    /// fallback in `MenuParser` still applies, with `PricePlausibility` behind it.
+    ///
+    /// Deliberately not a leading-`5`-strip heuristic: that would have to decide on its own that a
+    /// printed `59` means `$9`, and a real `$59` bottle of wine would be its victim. Promoting an
+    /// alternative reading makes Vision's own confidence do that work.
+    ///
+    /// Three candidates because that is what the log shows is enough; asking for more costs nothing
+    /// but has nothing left to find.
+    static func preferredCandidate(of result: VNRecognizedTextObservation) -> VNRecognizedText? {
+        let candidates = result.topCandidates(3)
+        guard let top = candidates.first else { return nil }
+        if containsAnchoredPrice(top.string) { return top }
+        for candidate in candidates.dropFirst() where containsAnchoredPrice(candidate.string) {
+            return candidate
+        }
+        return top
+    }
+
+    /// Whether the string contains a currency symbol attached to a number — `$9`, `$ 12`, `$13`.
+    /// A bare number doesn't count: that is exactly the ambiguity this is trying to resolve.
+    static func containsAnchoredPrice(_ s: String) -> Bool {
+        var sawSymbol = false
+        for character in s {
+            if character == "$" || character == "£" || character == "€" {
+                sawSymbol = true
+            } else if sawSymbol {
+                if character.isNumber { return true }
+                if character != " " { sawSymbol = false }
+            }
+        }
+        return false
     }
 
     /// Split a recognized string into per-word index ranges (on spaces). The ranges index into the

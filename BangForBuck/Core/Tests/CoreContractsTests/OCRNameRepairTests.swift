@@ -38,6 +38,24 @@ final class OCRNameRepairTests: XCTestCase {
         XCTAssertEqual(repaired("BELL'S TWO HEARTED"), "Bell's Two Hearted")
     }
 
+    /// `BUO LIGHT` off a 574 px menu. `LIGHT` folds exactly, so the one edit in `BUO`→`BUD` is
+    /// affordable even though a three-letter word normally gets no edits — and that exact anchor is
+    /// what keeps the relaxation honest.
+    func testAnExactWordPaysForAnEditInItsNeighbour() {
+        XCTAssertEqual(repaired("BUO LIGHT"), "Bud Light")
+        XCTAssertEqual(repaired("STELLA AXTOIS 3P"), "Stella Artois")
+        XCTAssertEqual(repaired("QUINNESS"), "Guinness")
+    }
+
+    /// The relaxation must not let a beer become a different beer. Two edits in `BUD`→`BUSCH` is
+    /// over the budget however exact the rest of the window is, and a window with no exact word
+    /// anywhere is refused rather than assembled out of guesses.
+    func testTheRelaxationCannotCrossBetweenBrands() {
+        XCTAssertEqual(repaired("BUD LIGHT"), "Bud Light")
+        XCTAssertEqual(repaired("BUSCH LIGHT"), "Busch Light")
+        XCTAssertNil(repaired("SEIALAMHCAD LLTRA"))   // Michelob Ultra, but far past recognition
+    }
+
     /// A leading word must not be treated as an abbreviation of a longer one, or every light beer
     /// becomes its full-strength sibling. Bud Light is 4.2%; Budweiser is 5%.
     func testALeadingWordIsNotAnAbbreviation() {

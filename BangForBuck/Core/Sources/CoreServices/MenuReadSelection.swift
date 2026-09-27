@@ -22,13 +22,21 @@ import CoreModel
 public enum MenuReadSelection {
 
     public struct Score: Equatable, Sendable {
+        /// Lines carrying a **currency-anchored** price — a `$` attached to a number. Ranked first
+        /// because the 09-27 log showed that counting priced drinks alone rewards the wrong reading:
+        /// the no-language-correction pass won 40 priced to 37, but several of its 40 were `$38`,
+        /// `$39`, `$31` and `$4` — bare numbers that OCR had mangled out of `$8`, `$9`, `$3` and
+        /// `$14`. A reading with *more* prices is not a reading with more *correct* prices, and a
+        /// printed `$` is the one piece of evidence that a number was meant as money.
+        public let anchored: Int
         /// Lines that became a drink carrying a plausible price — the useful output.
         public let priced: Int
-        /// Lines that became a drink at all. Lower is better at equal `priced`: the surplus is
-        /// junk headed for the "Not sure" bucket.
+        /// Lines that became a drink at all. Lower is better at equal yield: the surplus is junk
+        /// headed for the "Not sure" bucket.
         public let items: Int
 
-        public init(priced: Int, items: Int) {
+        public init(anchored: Int, priced: Int, items: Int) {
+            self.anchored = anchored
             self.priced = priced
             self.items = items
         }
@@ -38,12 +46,29 @@ public enum MenuReadSelection {
         let items = PricePlausibility.withdrawingImplausiblePrices(MenuParser().parse(lines))
         var priced = 0
         for item in items where item.price != nil { priced += 1 }
-        return Score(priced: priced, items: items.count)
+        var anchored = 0
+        for line in lines where containsAnchoredPrice(line) { anchored += 1 }
+        return Score(anchored: anchored, priced: priced, items: items.count)
     }
 
-    /// The best reading, or `[]` if there are none. Most priced drinks wins; at equal priced count
-    /// the leaner reading wins; at a full tie the **earlier** candidate wins, so callers should pass
-    /// the proven reader first and a tie changes nothing.
+    /// A currency symbol attached to a number: `$9`, `$ 12`. A bare `9` doesn't count — that is the
+    /// ambiguity being resolved, not evidence of resolving it.
+    static func containsAnchoredPrice(_ line: String) -> Bool {
+        var sawSymbol = false
+        for character in line {
+            if character == "$" || character == "£" || character == "€" {
+                sawSymbol = true
+            } else if sawSymbol {
+                if character.isNumber { return true }
+                if character != " " { sawSymbol = false }
+            }
+        }
+        return false
+    }
+
+    /// The best reading, or `[]` if there are none. Most **anchored** prices wins; then most priced
+    /// drinks; then the leaner reading; then, at a full tie, the **earlier** candidate, so callers
+    /// should pass the proven reader first and a tie changes nothing.
     public static func best(of candidates: [[String]]) -> [String] {
         guard var bestLines = candidates.first else { return [] }
         var bestScore = score(bestLines)
@@ -58,6 +83,7 @@ public enum MenuReadSelection {
     }
 
     static func isBetter(_ lhs: Score, than rhs: Score) -> Bool {
+        if lhs.anchored != rhs.anchored { return lhs.anchored > rhs.anchored }
         if lhs.priced != rhs.priced { return lhs.priced > rhs.priced }
         return lhs.items < rhs.items
     }

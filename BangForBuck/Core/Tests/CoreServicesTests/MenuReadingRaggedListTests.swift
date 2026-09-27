@@ -159,6 +159,26 @@ final class MenuReadingRaggedListTests: XCTestCase {
                        ["Coors $5", "Guinness $9", "Stella $7"])
     }
 
+    /// Nearest member, not last member. Modelled on rows 4 and 6 of the rectified tap list, which
+    /// lost their price by 0.0086 and 0.0091 against a tolerance of 0.00825: the name drifts steadily
+    /// down as you read across, but the right-aligned price sits back near where the row *started*.
+    /// Measured against the last word it is out of reach; measured against the nearest word it was
+    /// never in doubt.
+    func testARightAlignedPriceChainsToTheNearestWordNotTheLast() {
+        let observations = [
+            obs("4", 0.05, 0.09, midY: 0.500, h: 0.02),
+            obs("SAM", 0.10, 0.18, midY: 0.494, h: 0.02),
+            obs("ADAMS", 0.19, 0.30, midY: 0.488, h: 0.02),
+            obs("SEASONAL", 0.31, 0.45, midY: 0.482, h: 0.02),
+            obs("6%", 0.46, 0.51, midY: 0.478, h: 0.02),
+            obs("ABV", 0.52, 0.58, midY: 0.476, h: 0.02),
+            obs("$5", 0.84, 0.89, midY: 0.497, h: 0.02),
+        ]
+        // Drift from first word to last is 0.024, well past the 0.01 tolerance; the price is 0.003
+        // from "4" and 0.021 from "ABV".
+        XCTAssertEqual(LineAssembler.lines(from: observations), ["4 SAM ADAMS SEASONAL 6% ABV $5"])
+    }
+
     // MARK: - Continuation lines
 
     private let parser = MenuParser()
