@@ -38,6 +38,34 @@ public struct MenuParser {
                 inFoodSection = true; backfillIndex = nil; continue
             }
 
+            // A **continuation line**: a line that states attributes of the drink above rather than
+            // a drink of its own. Menus very commonly set an item as two printed rows —
+            //
+            //     BLUE MOON                  $6
+            //     (BELGIAN WHEAT) 5.4% ABV
+            //
+            // and OCR returns those as two lines, so the second became a phantom priceless item
+            // called "BELGIAN WHEAT" **and the printed 5.4% was thrown away**: the one number the
+            // whole ranking rests on, discarded on exactly the menus that bother to print it. On a
+            // forty-tap list that is forty phantoms in the "Not sure" bucket and forty beers ranked
+            // on an estimate.
+            //
+            // Recognized structurally, with no new vocabulary: once parentheticals, measurements and
+            // separators are removed, nothing is left. The ABV and size are harvested onto the item
+            // above (never overwriting what that item printed for itself) and the text is kept as its
+            // description. Placed before the header gate so `(CIDER) 5% ABV` can't open a Cider
+            // section, and requires an item above, so a parenthesized line that opens a menu is
+            // still free to be a header.
+            if !items.isEmpty, !inFoodSection, Self.isAttributeLine(line) {
+                let abv = Self.detectABV(line)
+                let size = Self.detectSize(line)
+                trace?("ATTR  abv=\(abv.map { "\($0)%" } ?? "-") size=\(size.map { "\($0.fluidOunces)oz" } ?? "-")"
+                    + " -> \"\(items[items.count - 1].name)\" | \(line)")
+                items[items.count - 1] = items[items.count - 1]
+                    .adoptingAttributes(abv: abv, size: size, description: line)
+                continue
+            }
+
             if let (cat, hp) = Self.sectionHeader(line) {
                 trace?("SECT  cat=\(cat.rawValue) headerPrice=\(hp.map { "$\($0.dollars)" } ?? "-") | \(line)")
                 inFoodSection = false
@@ -123,8 +151,15 @@ public struct MenuParser {
             let price = parsed.price ?? headerPrice
 
             if parsed.price == nil && headerPrice == nil && Self.looksLikeDescription(line) && !items.isEmpty {
-                trace?("DESC  attached to \"\(items[items.count - 1].name)\" | \(line)")
-                items[items.count - 1] = items[items.count - 1].addingDescription(line)
+                // An ABV is harvested here as well: plenty of menus print the strength inside the
+                // blurb ("a hazy New England IPA, 6.8% ABV") rather than on the title row. Size is
+                // deliberately NOT taken — a cocktail recipe is full of "1 oz" build quantities,
+                // which are ingredient measures, not the serving.
+                let abv = Self.detectABV(line)
+                trace?("DESC  attached to \"\(items[items.count - 1].name)\""
+                    + (abv != nil ? " abv=\(abv!)%" : "") + " | \(line)")
+                items[items.count - 1] = items[items.count - 1]
+                    .adoptingAttributes(abv: abv, size: nil, description: line)
                 continue
             }
 
@@ -491,10 +526,34 @@ public struct MenuParser {
     /// dashes from a parsed name. Conservative: only removes tokens that are unambiguously one of
     /// those, so real name words are kept.
     static func cleanName(_ name: String) -> String {
-        let kept = name.split(separator: " ").map(String.init).filter { token in
+        let tokens = dropEnumerator(name.split(separator: " ").map(String.init))
+        let kept = tokens.filter { token in
             !(isABVWord(token) || isPercentToken(token) || isSizeToken(token) || isDashToken(token))
         }
         return trimTrailingSeparators(kept.joined(separator: " "))
+    }
+
+    /// Drop a leading **list number**. Numbered tap lists ("1 - IC LIGHT", "12. Dogfish Head 60
+    /// Min") print a tap position that is not part of the drink's name: left in, it shows up in the
+    /// displayed title and it corrupts brand matching, which is what decides the ABV.
+    ///
+    /// Requires an explicit enumerator glyph (`#`, or a `-`/`.`/`)`/`:` attached to the number or
+    /// standing right after it) and at most three digits, so a real leading numeral in a name is
+    /// never touched: "10 Barrel Brewing", "151 Rum Punch", "2 OZ POUR", "1/2 price", "2019 Cabernet".
+    static func dropEnumerator(_ tokens: [String]) -> [String] {
+        guard tokens.count >= 2 else { return tokens }
+        let first = tokens[0]
+        let unhashed = first.hasPrefix("#") ? String(first.dropFirst()) : first
+        let core = stripEdgePunctuation(unhashed)
+        guard !core.isEmpty, core.count <= 3, core.allSatisfy({ $0.isNumber }) else { return tokens }
+
+        // "1." / "1)" / "#1" — the glyph travels with the number.
+        if first.hasPrefix("#") || unhashed != core { return Array(tokens.dropFirst()) }
+        // "1 - NAME" — the glyph is the next token.
+        if isDashToken(tokens[1]) || tokens[1] == "." || tokens[1] == ":" {
+            return Array(tokens.dropFirst(2))
+        }
+        return tokens
     }
 
     static func isABVWord(_ t: String) -> Bool { t.lowercased() == "abv" }
@@ -521,6 +580,64 @@ public struct MenuParser {
         let core = s[0..<(s.count - 2)]
         return !core.isEmpty && core.allSatisfy { $0.isNumber || $0 == "." }
     }
+
+    // MARK: - Continuation (attribute) lines
+
+    /// A line that carries **only** attributes of the item above: parenthesized text, measurements
+    /// and separators, with no independent name and no price. `(BELGIAN WHEAT) 5.4% ABV`,
+    /// `(Light Lager) - 4.2%ABV`, `(4.7%)`, `5.8% ABV`, `16 oz`, `(SEASONAL)`.
+    ///
+    /// Deliberately structural rather than a list of style words, because style vocabulary is
+    /// unbounded (every brewery invents one) while the *shape* of a continuation line is not. Two
+    /// ways to qualify:
+    ///
+    ///  - a **parenthesized descriptor** — every letter on the line sits inside brackets, so the
+    ///    line makes no claim of its own name; or
+    ///  - a **bare measurement** — nothing but an ABV and/or a size.
+    ///
+    /// A price disqualifies immediately: a line with a price is an item, however it is punctuated.
+    static func isAttributeLine(_ line: String) -> Bool {
+        if firstIndex(of: "$", in: line) != nil { return false }
+        let hasMeasurement = detectABV(line) != nil || detectSize(line) != nil
+        let outside = outsideParentheses(line)
+        let hadParenthetical = outside != line
+        // Tokens left once the brackets are gone must all be measurements/separators.
+        for token in replaceSeparators(outside).split(separator: " ").map(String.init) {
+            let w = stripEdgePunctuation(token).lowercased()
+            if w.isEmpty || !w.contains(where: { $0.isLetter || $0.isNumber }) { continue }
+            if isMeasurementOrPrice(w) || isPercentToken(w) || isSizeToken(w) { continue }
+            if isABVWord(w) { continue }
+            if isGluedABV(w) { continue }       // "4.2%abv" with no space
+            return false                        // a real word of its own → this is an item
+        }
+        // A bracket-only line needs no measurement ("(SEASONAL)"); a bare line does, so an empty or
+        // punctuation-only line isn't swallowed.
+        return hadParenthetical ? containsLetter(line) : hasMeasurement
+    }
+
+    /// `line` with every parenthesized span removed. Unbalanced brackets (OCR drops one routinely)
+    /// are treated as opening a span that runs to the end of the line.
+    static func outsideParentheses(_ line: String) -> String {
+        var out = ""
+        var depth = 0
+        for c in line {
+            if c == "(" || c == "[" { depth += 1 }
+            else if c == ")" || c == "]" { depth = depth > 0 ? depth - 1 : 0 }
+            else if depth == 0 { out.append(c) }
+        }
+        return out
+    }
+
+    /// `4.2%abv` / `4.2abv` — an ABV printed with no space before the unit.
+    static func isGluedABV(_ w: String) -> Bool {
+        guard w.hasSuffix("abv") else { return false }
+        var head = Array(w.dropLast(3))
+        while head.last == "%" || head.last == " " { head.removeLast() }
+        guard !head.isEmpty else { return true }
+        return head.allSatisfy { $0.isNumber || $0 == "." }
+    }
+
+    static func containsLetter(_ s: String) -> Bool { s.contains { $0.isLetter } }
 
     /// A no-price line that reads like an ingredient list rather than a drink name (Finding 4).
     static func looksLikeDescription(_ line: String) -> Bool {
@@ -679,10 +796,13 @@ public struct MenuParser {
         return String(chars)
     }
 
+    /// Separator glyphs become spaces. `_` is here because a printed **leader rule** between a name
+    /// and its right-aligned price is often read as a run of underscores, which would otherwise
+    /// survive into the displayed name ("1 IC LIGHT ______").
     static func replaceSeparators(_ s: String) -> String {
         var out = ""
         for c in s {
-            if c == "•" || c == "·" || c == "…" || c == "|" || c == "/" { out.append(" ") } else { out.append(c) }
+            if c == "•" || c == "·" || c == "…" || c == "|" || c == "/" || c == "_" { out.append(" ") } else { out.append(c) }
         }
         return out
     }
@@ -839,6 +959,16 @@ private extension MenuItem {
         let combined = descriptionText.map { $0 + " " + text } ?? text
         return MenuItem(name: name, price: price, readABV: readABV, readSize: readSize,
                         category: category, descriptionText: combined)
+    }
+
+    /// Same item, having adopted the ABV/size printed on a **continuation line** below it, plus that
+    /// line's text as description. A value the item printed for itself always wins, so a second
+    /// reading can only ever fill a hole.
+    func adoptingAttributes(abv: Double?, size: Volume?, description: String) -> MenuItem {
+        MenuItem(name: name, price: price,
+                 readABV: readABV ?? abv, readSize: readSize ?? size,
+                 category: category,
+                 descriptionText: descriptionText.map { $0 + " " + description } ?? description)
     }
 
     /// Same item with a price attached — used to back-fill a cocktail name from the price line that

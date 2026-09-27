@@ -25,7 +25,10 @@ struct CaptureHomeView: View {
     @ObservedObject var supporter: SupporterStore
 
     /// Injected behind the contract (§6). Swap for a fake in tests; swap the OCR engine here only.
-    private let recognizer: any TextRecognizer = VisionTextRecognizer()
+    /// `MenuTextRecognizer` runs the geometric path and, on iOS 26, Apple's document-structure path,
+    /// then keeps whichever reading yields more priced drinks. On earlier systems, or if the
+    /// structured pass finds no document, it is `VisionTextRecognizer` unchanged.
+    private let recognizer: any TextRecognizer = MenuTextRecognizer()
 
     @State private var libraryItem: PhotosPickerItem?
     @State private var showCamera = false
@@ -43,7 +46,9 @@ struct CaptureHomeView: View {
     @State private var lastCaptured: CapturedImage?
     @State private var exportText: String?
 
-    private var cameraAvailable: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
+    private var cameraAvailable: Bool {
+        DocumentScanner.isSupported || UIImagePickerController.isSourceTypeAvailable(.camera)
+    }
 
     var body: some View {
         NavigationStack {
@@ -160,8 +165,20 @@ struct CaptureHomeView: View {
                 CompareView()
             }
             .sheet(isPresented: $showCamera) {
-                CameraPicker { image in process(image) }
+                // The system document scanner (edge detection, perspective correction, deskew,
+                // contrast, multi-page) when the device supports it; the plain camera otherwise.
+                // `ignoresSafeArea` goes on each branch rather than after the `if`, because a
+                // modifier trailing a `ViewBuilder` conditional has no single type to attach to.
+                if DocumentScanner.isSupported {
+                    DocumentScanner { pages in
+                        guard !pages.isEmpty else { return }
+                        process(pages: pages)
+                    }
                     .ignoresSafeArea()
+                } else {
+                    CameraPicker { image in process(image) }
+                        .ignoresSafeArea()
+                }
             }
             .sheet(isPresented: $showSupport) {
                 PaywallView(store: supporter)
@@ -253,24 +270,64 @@ struct CaptureHomeView: View {
         }
     }
 
+    /// A single image from the photo library, which did **not** come through the document scanner
+    /// and so has had no perspective correction applied. Without rectifying it, scanning a saved
+    /// photo and scanning with the camera are not the same test.
+    private func process(_ image: UIImage) {
+        process(pages: [image], rectify: true)
+    }
+
     /// Runs on the main actor; Vision work happens off-main inside the recognizer, so the UI stays
     /// responsive and only the state updates hop back here.
-    private func process(_ image: UIImage) {
-        guard let captured = CapturedImage(uiImage: image) else {
+    ///
+    /// Takes *pages*, because `DocumentScanner` can return several: menus are two-sided constantly,
+    /// and reading front and back into one ranking is free. Each page is recognized separately —
+    /// column and row geometry is per-page and must not be mixed — and the lines are concatenated
+    /// in page order, which is also the order a person would read them.
+    private func process(pages: [UIImage], rectify: Bool = false) {
+        let images = pages.compactMap { CapturedImage(uiImage: $0) }
+        guard !images.isEmpty else {
             errorMessage = "That image couldn’t be processed."
             return
         }
-        lastCaptured = captured   // for the DEBUG OCR export
         isProcessing = true
         Task { @MainActor in
             defer { isProcessing = false }
             do {
-                let lines = try await recognizer.recognizeLines(in: captured)
+                var lines: [String] = []
+                for (index, image) in images.enumerated() {
+                    // Perspective correction, off the main actor, only for images the document
+                    // scanner didn't already correct.
+                    let prepared = rectify
+                        ? CapturedImage(pngData: await ImageRectifier.rectified(pngBytes: image.pngData))
+                        : image
+                    if index == 0 { lastCaptured = prepared }   // DEBUG export, as OCR saw it
+                    lines += try await recognizer.recognizeLines(in: prepared)
+                }
                 guard !lines.isEmpty else {
                     errorMessage = "No readable text found. Try a clearer, straight-on photo with good light."
                     return
                 }
                 viewModel.load(lines: lines)
+                #if DEBUG
+                // The other half of the console diagnostic. `VisionTextRecognizer` already dumps
+                // observations, assembled lines and the parser trace; this adds what happened after
+                // the parser — withdrawn prices, resolved ABV/size with provenance, and the ranking
+                // as ordered.
+                //
+                // Read off the view model's own session on purpose. Rebuilding it here with
+                // `MenuPipeline()` would use `StaticBeverageKnowledge`, while the screen resolves
+                // through `CatalogBackedKnowledge` over the bundled catalog — so the dump would
+                // disagree with the ranking it is supposed to explain, which is worse than no dump.
+                // Printed immediately after `load`, before any edit can perturb it.
+                print("""
+
+                ===== BANGFORBUCK RANKING (start) =====
+                \(ObservationFixture.sessionDump(viewModel.session))
+                ===== BANGFORBUCK RANKING (end) =====
+
+                """)
+                #endif
                 showResults = true
             } catch {
                 errorMessage = "Couldn’t read that image. Try a clearer, straight-on photo."

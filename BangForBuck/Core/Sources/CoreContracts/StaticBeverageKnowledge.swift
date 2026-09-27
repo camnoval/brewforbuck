@@ -39,6 +39,25 @@ public struct StaticBeverageKnowledge: BeverageKnowledge {
                                    source: .brandMatch(matched: brand.label))
         }
 
+        // 1b) Brand table again, this time by glyph shape rather than spelling. A name OCR mangled
+        //     ("MICHELOS ULTRA", "BUSCHUGHT", "DOGRSH HEAD 60 MIN") would otherwise fall through to
+        //     a style or category estimate, which is how a menu that prints an ABV beside every tap
+        //     ends up ranked entirely on guesses. Runs after the exact tier, so a clean name's
+        //     behaviour is untouched, and before styles, so a repaired brand still beats a chart
+        //     average. The note says which brand it landed on, so the person can see and reject it.
+        if let brand = OCRNameRepair.match(for: key) {
+            if brand.category == .nonAlcoholic {
+                return BeverageProfile(category: .nonAlcoholic, typicalABV: 0,
+                                       typicalSize: Self.defaultSize(.nonAlcoholic),
+                                       source: .brandMatch(matched: brand.label))
+            }
+            let resolved: BeverageCategory = (sectionCategory != nil && sectionCategory != .unknown)
+                ? sectionCategory! : brand.category
+            return BeverageProfile(category: resolved, typicalABV: brand.abv,
+                                   typicalSize: Self.defaultSize(resolved),
+                                   source: .brandMatch(matched: brand.label))
+        }
+
         // 2) Style / varietal chart (most specific rule wins — the list is ordered that way).
         if let rule = Self.styleRules.first(where: { r in r.keywords.contains { Self.contains(key, $0) } }) {
             let resolved: BeverageCategory = {

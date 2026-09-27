@@ -328,7 +328,8 @@ public enum LineAssembler {
     }
 
     /// Partition `group` at `gutterX` and accept only if both sides are real columns
-    /// (enough observations AND wide enough). This is the guard that stops over-splitting.
+    /// (enough observations, wide enough, AND name-bearing). This is the guard that stops
+    /// over-splitting.
     private static func guardedSplit(
         _ group: [TextObservation],
         at gutterX: Double
@@ -337,9 +338,80 @@ public enum LineAssembler {
         let right = group.filter { $0.box.midX >= gutterX }
         guard left.count >= minSideCount, right.count >= minSideCount,
               horizontalSpan(left) >= minColumnSpan - spanEpsilon,
-              horizontalSpan(right) >= minColumnSpan - spanEpsilon
+              horizontalSpan(right) >= minColumnSpan - spanEpsilon,
+              nameFraction(left) >= minNameFraction,
+              nameFraction(right) >= minNameFraction
         else { return nil }
         return (left, right)
+    }
+
+    // MARK: - Is a side a column, or is it the price gutter of one column?
+
+    /// **Geometry alone cannot answer this.** A single column of right-aligned prices produces the
+    /// same shape as a genuine two-column page: a blank vertical channel that nearly every row
+    /// respects. On a ragged tap list — `1 - IC LIGHT 4.2% ABV ————— $5` repeated down the page,
+    /// whose leader rules Vision does not return as text — that channel is ~0.2 of the page wide, so
+    /// it clears `minColumnSpan`, and every row votes for it, so `gutterSupport`'s votes-vs-crossers
+    /// veto sees nothing wrong either. The page is cut into "names" and "prices" and **every price on
+    /// the menu is stranded from its drink**, which is a total read failure on a menu that is
+    /// otherwise perfectly legible.
+    ///
+    /// Content answers it. A menu **column** carries drink names; a **price gutter** carries prices,
+    /// an ABV and the odd stray size. So a cut is refused unless both sides carry names of their own.
+    /// Applied inside `guardedSplit` so it protects all three detector tiers at once (corridor,
+    /// central, per-row voting) rather than only the one that happened to fire.
+    ///
+    /// Measured on all eight real OCR dumps: every side of every accepted split sits at **0.33 or
+    /// above** (running to 0.97), while the tap list's price gutter sits at **0.03**. That is an 11×
+    /// gap with nothing inside it, and anywhere in 0.05–0.40 gives byte-identical output on all
+    /// eight menus, so this is a gap rather than a fitted number. Set nearer the column side because
+    /// the two errors are not symmetric: wrongly vetoing a real gutter fuses two items into one
+    /// visible row that a person can see and edit, while wrongly accepting a price gutter silently
+    /// destroys every price on the page.
+    static let minNameFraction = 0.2
+
+    /// Unit words that name a measurement rather than a drink.
+    static let unitWords: Set<String> = ["abv", "alc", "vol", "oz", "ozs", "ml", "cl", "proof"]
+
+    /// Whether an observation could be part of a drink **name**: at least two letters once edge
+    /// punctuation is trimmed (so `$7`, `5`, `%`, `-`, a leader rule and any bare number are out),
+    /// and not a unit word or a digits-glued unit (`ABV`, `oz`, `12oz`, `750ml`).
+    static func isNameBearing(_ text: String) -> Bool {
+        let trim: Set<Character> = [
+            "$", ".", ",", "%", "|", "•", "·", "(", ")", "/", "-", "–", "—",
+            "_", "\"", "'", "*", "°", ":", ";", " ",
+        ]
+        var chars = Array(text)
+        var start = 0
+        var end = chars.count
+        while start < end, trim.contains(chars[start]) { start += 1 }
+        while end > start, trim.contains(chars[end - 1]) { end -= 1 }
+        chars = Array(chars[start..<end])
+
+        var letters = 0
+        for c in chars where c.isLetter { letters += 1 }
+        guard letters >= 2 else { return false }
+
+        let word = String(chars).lowercased()
+        if unitWords.contains(word) { return false }
+
+        // A digit run glued to a unit is a size, not a name: "12oz", "16OZ.", "750ml".
+        var digits = ""
+        var suffix = ""
+        for c in word {
+            if suffix.isEmpty, c.isNumber || c == "." { digits.append(c) } else { suffix.append(c) }
+        }
+        if !digits.isEmpty, unitWords.contains(suffix) { return false }
+
+        return true
+    }
+
+    /// Share of `group` that is name-bearing.
+    static func nameFraction(_ group: [TextObservation]) -> Double {
+        guard !group.isEmpty else { return 0 }
+        var count = 0
+        for observation in group where isNameBearing(observation.text) { count += 1 }
+        return Double(count) / Double(group.count)
     }
 
     private static func coverage(of observations: [TextObservation]) -> [Int] {
@@ -375,39 +447,63 @@ public enum LineAssembler {
 
     // MARK: - Row assembly within one column
 
+    /// Group each printed row by **following its baseline**, not by holding it to a fixed band.
+    ///
+    /// The previous rule pinned `anchorMidY` to a row's topmost box and required every later box to
+    /// sit within `tolerance` of *that* anchor, to "prevent cumulative drift". On a menu lying flat
+    /// that is right. On a paper strip held in the hand it is fatal, because the drift is real: the
+    /// page curls, so one printed row's baseline genuinely moves as you read across it. Measured on
+    /// the Shorty's tap list (`Tooling/Fixtures/shortys_rotating.txt`), row 1 runs y = 0.8304 →
+    /// 0.8172 — a drift of 0.0132 against a tolerance of 0.0088 — so `1 - IC LIGHT` and `4.2% ABV`
+    /// came out as two lines and the beer lost its printed strength before the parser saw it.
+    ///
+    /// Deskewing cannot fix this: the curl is not a rotation. On that same page rows 1–8 slope down
+    /// to the right (to -0.096 dy/dx), rows 13 and 22–27 are flat, and row 28 slopes *up*. No single
+    /// angle describes it.
+    ///
+    /// What is stable is the step between neighbours. Adjacent words in one printed row stay close
+    /// however far the row's two ends have drifted apart — the largest neighbour step on that page
+    /// is 0.0044, half the tolerance, while the gap to the row above is ~0.032. So each box chains
+    /// onto whichever open row's rightmost member is nearest in y. The tolerance is unchanged; only
+    /// what it is measured *from* changes, so there is nothing new to tune.
+    ///
+    /// The anchor's real job — stopping a chain from walking down a column and swallowing the page —
+    /// is still done, by x. Boxes are consumed left to right and each joins exactly one row, so a
+    /// stack of right-aligned prices has no left neighbour at a similar y to chain onto and cannot
+    /// absorb anything.
     private static func assembleRows(
         _ observations: [TextObservation],
         rowToleranceFraction: Double
     ) -> [String] {
         guard !observations.isEmpty else { return [] }
-
-        // Top of page first (Vision y increases upward, so descending midY).
-        let sorted = observations.sorted { $0.box.midY > $1.box.midY }
-        let tolerance = medianHeight(of: sorted) * rowToleranceFraction
+        let tolerance = medianHeight(of: observations) * rowToleranceFraction
 
         var rows: [[TextObservation]] = []
-        var current: [TextObservation] = []
-        var anchorMidY: Double? = nil   // the row's first (topmost) box; prevents cumulative drift
-
-        for observation in sorted {
-            let mid = observation.box.midY
-            if let anchor = anchorMidY, abs(mid - anchor) > tolerance {
-                rows.append(current)
-                current = [observation]
-                anchorMidY = mid
-            } else {
-                if anchorMidY == nil { anchorMidY = mid }
-                current.append(observation)
+        for observation in observations.sorted(by: { $0.box.minX < $1.box.minX }) {
+            var bestIndex: Int?
+            var bestDelta = Double.greatestFiniteMagnitude
+            for (index, row) in rows.enumerated() {
+                guard let last = row.last else { continue }
+                let delta = abs(observation.box.midY - last.box.midY)
+                if delta <= tolerance, delta < bestDelta {
+                    bestDelta = delta
+                    bestIndex = index
+                }
             }
+            if let bestIndex { rows[bestIndex].append(observation) } else { rows.append([observation]) }
         }
-        if !current.isEmpty { rows.append(current) }
 
-        return rows.flatMap { row in
-            let ordered = row.sorted { $0.box.minX < $1.box.minX }   // left to right
-            return splitAtPriceToNameBoundaries(ordered).map { segment in
+        // Top of page first (Vision y increases upward). Each row is already left-to-right, which
+        // `splitAtPriceToNameBoundaries` relies on, so it must not be re-sorted here.
+        return rows.sorted { topEdge(of: $0) > topEdge(of: $1) }.flatMap { row in
+            splitAtPriceToNameBoundaries(row).map { segment in
                 segment.map { trimmed($0.text) }.joined(separator: " ")
             }
         }
+    }
+
+    private static func topEdge(of row: [TextObservation]) -> Double {
+        row.reduce(-Double.greatestFiniteMagnitude) { max($0, $1.box.midY) }
     }
 
     // MARK: - Price → name boundaries within one row

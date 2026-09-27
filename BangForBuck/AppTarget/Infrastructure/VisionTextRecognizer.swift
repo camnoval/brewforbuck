@@ -28,6 +28,17 @@ struct VisionTextRecognizer: TextRecognizer {
         LineAssembler.lines(from: try await recognizeObservations(in: image))
     }
 
+    /// Same pass with Vision's language correction turned off.
+    ///
+    /// Language correction biases recognition toward dictionary words, which is right for prose and
+    /// arguable for a page that is almost entirely brand names — "Yuengling", "Troegs", "Dogfish"
+    /// and "Wynona's" are not words. Rather than guess which setting is better, `MenuTextRecognizer`
+    /// runs both and lets `MenuReadSelection` score them, so the page decides.
+    func recognizeLinesWithoutLanguageCorrection(in image: CapturedImage) async throws -> [String] {
+        LineAssembler.lines(from: try await recognizeObservations(pngBytes: image.pngData,
+                                                                 languageCorrection: false))
+    }
+
     /// The raw observations before line assembly — the seam the debug OCR-export affordance taps to
     /// turn a mis-scanned photo into a `LineAssembler` fixture. Same Vision pass as `recognizeLines`.
     /// Spelled with the fully-qualified type because the file-private `TextObservation` typealias
@@ -38,7 +49,10 @@ struct VisionTextRecognizer: TextRecognizer {
 
     /// Decode + run Vision on a background queue so a large photo never blocks the main thread; the
     /// caller `await`s the result. `.accurate` + language correction suits printed menus.
-    private func recognizeObservations(pngBytes: [UInt8]) async throws -> [TextObservation] {
+    private func recognizeObservations(
+        pngBytes: [UInt8],
+        languageCorrection: Bool = true
+    ) async throws -> [TextObservation] {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 guard let cgImage = UIImage(data: Data(pngBytes))?.cgImage else {
@@ -122,14 +136,42 @@ struct VisionTextRecognizer: TextRecognizer {
                             candidates += "  \(String(format: "%.2f", candidate.confidence))  \(candidate.string)\n"
                         }
                     }
+
+                    // The ALTERNATIVES Vision already computed and we currently throw away.
+                    //
+                    // `topCandidates(1)` is used everywhere in this file, so the second and third
+                    // readings of a line are discarded unseen. That matters because the 09-27 dump
+                    // turned `$9` into `59` and `$8` into `58`, and inventing a leading-`5` repair
+                    // rule is guesswork if the correct string was sitting in candidate 2 the whole
+                    // time. Logged only for lines that contain a digit — the ones where a currency
+                    // or ABV glyph could have been confused — so the dump stays readable.
+                    //
+                    // Diagnostic only: nothing selects among these yet. What the rescan says
+                    // decides whether candidate selection is a two-line change or a dead end.
+                    var alternates = "# Alternative readings (lines containing a digit, top 3):\n"
+                    for result in results {
+                        let top = result.topCandidates(3)
+                        guard let first = top.first,
+                              first.string.contains(where: { $0.isNumber }) else { continue }
+                        guard top.count > 1 else {
+                            alternates += "  (only one candidate)  \(first.string)\n"
+                            continue
+                        }
+                        let rendered = top.enumerated().map { index, candidate in
+                            "[\(index + 1)] \(String(format: "%.2f", candidate.confidence)) \(candidate.string)"
+                        }.joined(separator: "   ")
+                        alternates += "  \(rendered)\n"
+                    }
                     let aspect = Double(cgImage.width) / Double(cgImage.height)
                     print("""
 
                     ===== BANGFORBUCK OCR EXPORT (start) =====
                     # image \(cgImage.width)x\(cgImage.height) px (aspect \(String(format: "%.3f", aspect)))
                     # \(results.count) Vision lines -> \(observations.count) word observations
+                    # languageCorrection = \(languageCorrection)
 
                     \(candidates)
+                    \(alternates)
                     \(ObservationFixture.debugDump(observations))
                     \(ObservationFixture.parseDump(assembled))
                     ===== BANGFORBUCK OCR EXPORT (end) =====
@@ -139,7 +181,7 @@ struct VisionTextRecognizer: TextRecognizer {
                     continuation.resume(returning: observations)
                 }
                 request.recognitionLevel = .accurate
-                request.usesLanguageCorrection = true
+                request.usesLanguageCorrection = languageCorrection
                 request.recognitionLanguages = ["en-US"]   // menus here are English; adjust to localize
 
                 // PNG bytes bake orientation in, so `.up` is correct (see CapturedImage+UIImage).

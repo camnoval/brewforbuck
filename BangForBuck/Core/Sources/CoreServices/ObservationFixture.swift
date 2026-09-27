@@ -72,6 +72,48 @@ public enum ObservationFixture {
         return out
     }
 
+    /// Everything that happens **after** the parser: enrichment, exclusion, and the ranking the
+    /// person actually sees. `parseDump` stops at `[MenuItem]`, so between it and the screen there
+    /// are three unobserved steps — `PricePlausibility` withdrawing a price, `DrinkResolver`
+    /// resolving ABV/size through `BeverageKnowledge`, and `ValueRanker` ordering the result — and a
+    /// complaint of the form "garbage numbers next to the drinks" can come from any of them.
+    ///
+    /// Each ranked row prints its metric value, its price, and its ABV/size **with provenance**,
+    /// which is the specific thing that was missing: an `est` ABV is the knowledge layer's category
+    /// default, and a podium built out of `est` values on a menu that prints its ABVs everywhere
+    /// means the printed numbers were lost upstream, not that the estimator misbehaved. `read`
+    /// versus `est` therefore separates a parser bug from a knowledge-table bug in one glance.
+    ///
+    /// Diagnostic only; nothing in the shipping path calls it.
+    public static func sessionDump(_ session: MenuSession) -> String {
+        let ranked = session.rankedDrinks
+        let needsPrice = session.needsPriceDrinks
+
+        var out = "# Ranking by \(session.metric.rawValue)"
+        out += "  —  \(ranked.count) ranked, \(needsPrice.count) needsPrice, "
+        out += "\(session.excludedNonAlcoholic.count) excluded non-alcoholic\n"
+        out += "# quality: \(session.quality.pricedCount)/\(session.quality.itemCount) priced"
+        out += " (\(fmt(session.quality.pricedFraction * 100))%)"
+        out += session.quality.isLowConfidence ? "  ⚠️ FLAGGED THIN\n" : "\n"
+
+        var readABV = 0
+        for row in ranked where !row.drink.abv.isEstimated { readABV += 1 }
+        out += "# ABV provenance among ranked: \(readABV) read, \(ranked.count - readABV) estimated\n"
+
+        for row in ranked {
+            let d = row.drink
+            out += "  #\(row.rank)  value=\(fmt(row.value))"
+            out += "  $\(d.price.map { fmt($0.dollars) } ?? "-")"
+            out += "  abv=\(fmt(d.abv.value))%\(d.abv.isEstimated ? "(est)" : "(read)")"
+            out += "  size=\(fmt(d.size.value.fluidOunces))oz\(d.size.isEstimated ? "(est)" : "(read)")"
+            out += "  cat=\(d.category.rawValue)"
+            out += "  \(quoted(d.name))\n"
+        }
+        for d in needsPrice { out += "  NEEDS-PRICE  cat=\(d.category.rawValue)  \(quoted(d.name))\n" }
+        for name in session.excludedNonAlcoholic { out += "  EXCLUDED-NA  \(quoted(name))\n" }
+        return out
+    }
+
     // MARK: - Foundation-free helpers
 
     /// Round to 4 decimals and trim trailing zeros: `0.05`, `0.8`, `0.3266`, `1`.

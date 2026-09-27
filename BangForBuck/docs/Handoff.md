@@ -5,6 +5,325 @@ here — keep this lean. Newest note on top; each new note says plainly what it 
 
 ---
 
+## ⇢ STATUS (2026-09-27 part 3) — Prior art, then the free half of it implemented
+
+**Adds to part 2; supersedes nothing.** Went looking for how document analysis and other scanning
+apps solve these problems before implementing my own fixes, which was the right order: two of my
+fixes turned out to be compensating for a bad input, and both geometry fixes turned out to be crude
+versions of well-cited algorithms. Everything below is free (system APIs and code already in the
+binary — no SDK, no service, no per-scan cost). Still nothing compiled.
+
+### 1. The capture was the wrong tool — `DocumentScanner.swift`
+
+`CameraPicker` takes a plain photo via `UIImagePickerController.originalImage`.
+`VNDocumentCameraViewController` (VisionKit, iOS 13+, free) is the scanner from Notes: live edge
+detection with a quad on the viewfinder, automatic capture, cropping, **perspective correction**,
+document enhancement (deskew, flatten, contrast), and multi-page. A photo records the angle, the
+lighting and the curl; a scan records a normalized page.
+
+This attacks part 2 §2 (page curl) and the `$`→`5` glyph errors at the source instead of teaching
+the reader to tolerate them, and the live quad tells someone at a bar that they're too far or too
+skewed, which nothing currently does. `CameraPicker` stays as the fallback when `isSupported` is
+false. **Multi-page is on**: menus are two-sided constantly, each page is recognized separately
+(geometry must not be mixed across pages) and the lines concatenate in page order.
+
+### 2. Vision's alternative readings were being thrown away
+
+`topCandidates(1)` appears in both places in `VisionTextRecognizer`, so the second and third
+readings of every line are discarded unseen. Given that `$9` came back as `59`, inventing a
+leading-`5` repair rule is guesswork if the right string was in candidate 2 all along.
+
+The dump now logs the top 3 for every line containing a digit. **Nothing selects among them yet —
+deliberately.** What the rescan shows decides whether candidate selection is a two-line change or a
+dead end, and building the repair first would be fitting a rule to a symptom.
+
+### 3. Language correction is now an A/B the page decides
+
+`usesLanguageCorrection = true` biases recognition toward dictionary words on a page that is almost
+entirely brand names. Rather than pick, `MenuTextRecognizer` runs the page both ways and lets
+`MenuReadSelection` score them. Costs one extra on-device pass; needs no judgement from us.
+
+### 4. `OCRNameRepair` — the lexicon was already in the binary
+
+The garbled names are all one glyph-shape confusion from a brand in `generatedBrandTable`
+(655 curated entries with vetted ABVs):
+
+    MICHELOS ULTRA  →  Michelob Ultra          S for B
+    BUSCHUGHT       →  Busch Light             LI read as one U, space lost
+    DOGRSH HEAD     →  Dogfish Head            FI read as one R
+    TRUEY           →  Truly                   L for E
+    GUINESS         →  Guinness                dropped letter
+
+Lexicon-constrained correction is the standard answer in OCR pipelines. Two folds — single-glyph
+classes (`0/O/Q`, `1/I/l`, `5/S/$`, `8/B`, `6/G`, `2/Z`) and **ligature collapses** where two kerned
+capitals read as one glyph (`LI→U`, `FI→R`, `RN→M`, `VV→W`, `CL→D`) — then a length-scaled edit
+distance. The ligature fold is the load-bearing half: `BUSCHUGHT` and `Busch Light` fold to the
+*same string*, distance zero, no fuzziness required.
+
+**Matching is per word, not per character.** A floating character window finds `press` inside
+`MARG UNDER PRESSURE` and `beck's` two edits from `BUCKSHORT`; word alignment doesn't. Measured
+against the real dump: **15 of 15 garbled names repaired, 0 false positives across 27 non-brand
+lines.** Wired as tier 1b in `StaticBeverageKnowledge` — after the exact brand tier, so clean names
+behave exactly as before, and before the style chart, so a repaired brand beats a chart average.
+The note names the brand it landed on, so the person can see and reject it.
+
+**Two deliberate misses.** `SREWDOG ELVIS AF` stays unmatched: the nearest entry is Brewdog Elvis
+Juice at 6.5%, but Elvis AF is the alcohol-free one, so a confident partial match would be worse
+than none. `IC UGHT` too — `ic light` is not in `Tooling/Data/beverages.json`. When the table is
+missing a beer the fix is the table, not a looser threshold. **Worth adding to beverages.json:**
+IC Light, IC Light Mango, Brewdog Elvis AF, Victory Sour Monkey, Penn Brewery Weizen, Platform,
+Helltown, Evergrain, North Country — all Pittsburgh taps this app will meet again.
+
+### 5. A pre-existing precision bug, not fixed, flagged
+
+The existing brand tier matches by raw substring containment with no word boundary, so
+`MARG UNDER PRESSURE` already resolves to the seltzer brand **Press** today, before any of this.
+`OCRNameRepair` avoids that class by construction, but tier 1 still has it. Fixing it means
+word-anchoring a load-bearing matcher with 655 keys and a lot of tests behind it — worth doing,
+worth doing on purpose, not as a side effect of this batch.
+
+### 6. What the prior art says to do next (not built)
+
+Both part 2 geometry fixes are crude versions of published algorithms, and the published versions
+delete tuned constants rather than adding them:
+
+- **Breuel 2002**, *Two Geometric Algorithms for Layout Analysis*: cover the page background with
+  maximal empty rectangles and score them as column separators, then use those gutters as
+  **obstacles** in text-line finding. Reported as not sensitive to font size, font style, or scan
+  resolution — exactly what `minGutterGap` lacks, and it is `minGutterGap` being 0.0032 off that
+  turned Shorty's beer column into wine. Under ~100–200 lines. Also a better architecture than
+  ours: obstacles are recoverable, a bad block split isn't.
+- **O'Gorman 1993**, *The Document Spectrum* (Docstrum): nearest-neighbour clustering with a
+  distance histogram whose peaks *are* the within-word, within-line and between-line spacings.
+  Claimed independent of skew angle, of text spacing, and tolerant of differing local orientations
+  in one image — which is literally the tap list, curling one way at the top and the other at the
+  bottom. Our baseline chaining is a degenerate Docstrum; the histogram makes the tolerance a
+  measurement instead of `0.5 × medianHeight`.
+- Shafait's comparison found no single winner but the three best performers were constrained
+  text-line finding, Docstrum, and Voronoi — i.e. the two above.
+
+Do these *after* the rescan. If the document scanner removes the curl, the chaining fix may be all
+that's needed and the Docstrum upgrade becomes optional rather than load-bearing.
+
+### 7. Running the rescan — `Tooling/ingest_dump.py`
+
+Save the whole console to a file and run `python3 ingest_dump.py rescan.txt --name shortys`. It
+splits every scan into a replayable fixture, then reports shipping vs gutter-veto vs chaining vs
+both, with **complete rows** (name + ABV + price on one line) as the headline number — 0 of 22 on
+the tap list before, 22 of 22 with both fixes. It also surfaces the alternative-candidate lines, the
+ranking summary, the read-selection scores, and warns when a scan is under 1200 px wide.
+
+---
+
+
+**Supersedes part 1's §1 and §4 diagnosis.** Two real dumps arrived (`ROTATING` tap list and the new
+three-column Shorty's card) plus four screenshots of the ranking. Part 1's price-gutter bug is
+**confirmed on real coordinates**, but it was never the failure reported from the bar, and the tap
+list turns out to have a *second*, independent geometry bug that had to be fixed for the first fix
+to be worth anything. Still nothing compiled.
+
+`Tooling/Fixtures/shortys_rotating.txt` holds the 209 real observations. `faithful.py` reproduces the
+device output exactly — 55 lines, line for line — so the bench can now be trusted on this page. The
+synthetic `rotating_fixture.py` is deleted; it was right about the shape and wrong about the cause.
+
+### 1. What each symptom actually was
+
+| What the person saw | Cause |
+|---|---|
+| ROTATING: "0 of 16 lines priced", nothing to rank | price-gutter cut (part 1 §1) **plus** rows torn in half by page curl |
+| New menu: beers at 12% ABV / 5 oz | every beer inherited `wineGlass` — one missed column gutter |
+| New menu: `$59.00`, `$58.00` menu prices | Vision read `$9` as `59` and `$8` as `58` |
+| New menu: "BAZY UFTLE THING", "DOGRSH HEAD", "SREWDOG" | 574 px wide source image (see §5) |
+
+Note what is *absent*: no phantom `(BELGIAN WHEAT)`-style items on this dump, because the continuation
+rows read as `(LAGER) 5% AB4` and similar and still became items — part 1 §2's fix does apply, but
+it was not the headline problem.
+
+### 2. Page curl breaks rows, and deskewing cannot fix it
+
+`assembleRows` pinned `anchorMidY` to a row's topmost box and held every later box to *that* anchor,
+to "prevent cumulative drift". On a paper strip held in the hand the drift is real: row 1 of the tap
+list runs y = 0.8304 → 0.8172, a drift of 0.0132 against a tolerance of 0.0088, so `1 - IC LIGHT`
+and `4.2% ABV` came out as separate lines and the printed strength never reached the beer.
+
+**This is not skew.** On that one page rows 1–8 slope down to the right (to −0.096 dy/dx), rows 13
+and 22–27 are dead flat, and row 28 slopes *up* (+0.023). No single angle describes it, so
+`ImageDeskew` — pending for five sessions — would not have helped.
+
+What is stable is the step between neighbours: the largest gap between adjacent words *inside* a row
+on that page is 0.0044, half the tolerance, while the gap to the row above is ~0.032. So rows now
+chain each box onto whichever open row's rightmost member is nearest in y. Same tolerance; only what
+it is measured *from* changed, so nothing new to tune. The anchor's real job — stopping a chain
+walking down a price column — is still done, by x, and there's a test for it.
+
+### 3. Measured, on real coordinates
+
+| | ROTATING lines | complete `name + ABV + price` rows |
+|---|---|---|
+| shipping | 55 | 5 of 22 |
+| price-gutter veto only | 33 | 12 of 22 |
+| baseline chaining only | 45 | 5 of 22 |
+| **both** | 23 | **22 of 22** |
+
+Neither fix is sufficient alone, which is worth remembering before either gets reverted as
+"unnecessary".
+
+**Corpus effect of chaining: 6/8 byte-identical, and the two differences are not regressions.**
+Menu 7 improves (`cocktails` + `in a souvenir cup +5` becomes one line). Menu 2 is the 1948 card that
+`MenuQuality` already condemns; one line there gets better (`Sparkling Water .90 45 20` now carries
+its own prices) and one gets worse (`Old old Smuggler Smugi Royal`). Both were junk before. This is
+the first change in the project that is **not** output-identical on the corpus, so it wants a look
+before it ships.
+
+### 4. The wine contamination: one threshold, 0.0032 of a page
+
+On the new menu the left column's rightmost edge is **0.4077** and the middle column's leftmost is
+**0.4495** — a gutter of **0.0418** against `minGutterGap = 0.045`. It misses by 0.0032, so columns 1
+and 2 were never separated, `WINES` (middle column) landed in the y-stream between
+`SREWDOG ELVIS AF $9` and `IC LIGHT MANGO 16 OZ $10` (both left column), and every item after it
+inherited `wineGlass` — including the entire ON TAP column, which is a *later block*, because the
+parser's section state is global across blocks. Hence 12% ABV and 5 oz on forty beers.
+
+That gutter is **~4× the page's median text height**; on the tap list, `0.045` is only 2.6 text
+heights. So the same absolute threshold means "how many text heights" differently by a factor of 1.8
+between two photos of the same bar's menus. `Tooling/assembler.py`'s unit change — measured three
+times now, never ported — is no longer a tidiness argument: it is the difference between reading
+Shorty's beer column as beer and reading it as wine.
+
+**Two fixes are needed, not one.** Even with the gutter found, the ON TAP column would inherit `WINES`
+from the middle column, because `ON TAP` was never recognized by Vision at all (it is absent from all
+93 line candidates). So section state must also be **scoped to its block**, with the exception that a
+header in a page-wide block still governs the columns beneath it. `LineAssembler` already computes
+blocks and then throws the boundaries away; they need to survive into `MenuParser`.
+
+### 5. Before anything else is tuned: re-dump at full resolution
+
+Both dumps are of **574×1020** and **765×1020** images — the compressed copies, not camera originals.
+The capture path does not downscale (`UIImagePickerController.originalImage` → `pngData()`), so this
+is the source files. A three-column menu at 574 px wide is why `Hazy Little Thing` came back as
+`BAZY UFTLE THING` and why `$` became `5` and `S`.
+
+The geometry findings above are resolution-independent and stand. The glyph findings may not, and
+the `$`→`5` repair should not be built until it's known whether it survives a full-resolution scan —
+the existing leading-`S` strip already handles `S9`, `S10`, `SS`; adding a leading-`5` strip is
+riskier (a genuine `$58` bottle) and belongs in `PricePlausibility`, judged against the menu's own
+price distribution, not in the parser.
+
+---
+
+
+**Supersedes nothing; the 09-09 part 2 note still describes monetization accurately.** Triggered by
+a live failure at Shorty's on 09-26 on two menus, neither of which is in the corpus. **Nothing here
+has been compiled.** Run `swift test` (319 green before this; +17 test functions added).
+
+### 1. The failure was geometric, and reproducible
+
+`LineAssembler` cut a single-column tap list down its own price gutter and stranded **every price on
+the page**. Reproduced in `Tooling/rotating_fixture.py`, which reconstructs the ROTATING list in
+assembler coordinates: 22 priced beers in, 22 unpriced beers plus 22 orphan `$5` lines out.
+
+Root cause is a real limit of pure geometry, not a bad threshold: **a column of right-aligned prices
+is the same shape as a second column.** A blank vertical channel that nearly every row respects.
+`minColumnSpan` passes it (ragged name-ends push the right side to 0.197 vs the 0.18 floor) and the
+votes-vs-crossers veto passes it (every row genuinely votes). Tier 3 fires, `guardedSplit` accepts.
+
+Fix: **`minNameFraction`** in `guardedSplit`, so it covers all three detector tiers at once. A
+column carries names; a price gutter carries prices and a stray ABV. Measured on all eight dumps,
+every side of every accepted split is 0.33–0.97 name-bearing; the tap list's gutter is 0.03. Set at
+0.20. Output is byte-identical on all eight at every threshold from 0.05 to 0.40.
+
+**An absolute floor is the trap here.** `len(names) >= minSideCount` reads as the more conservative
+rule and costs one of the eight menus: deep in the recursion a legitimate leaf can hold one
+name-bearing observation out of three. Fraction only. It was measured, then written into
+`experiment_pricegutter.side_is_column`'s doc comment so nobody re-adds it.
+
+### 2. Continuation lines were throwing away the printed ABV
+
+`BLUE MOON $6` / `(BELGIAN WHEAT) 5.4% ABV` is two printed rows, so the second became a **phantom
+priceless item named "BELGIAN WHEAT"** and the 5.4% was discarded — on a forty-tap list, forty
+phantoms in the "Not sure" bucket and forty beers ranked on an estimate, on a menu that prints the
+real number for every tap. `MenuParser.isAttributeLine` recognizes it structurally rather than by
+style vocabulary: once parentheticals, measurements and separators are removed, nothing is left.
+ABV/size are harvested onto the item above, never overwriting what that item printed for itself.
+New `ATTR` trace line. The `DESC` path now harvests ABV too (not size — cocktail recipes are full
+of `1 oz` build quantities).
+
+Scanned every fixture, test and sample in the tree: this absorbs exactly the two Thirsty Duck lines
+(`(Wheat Ale) - 4.0%ABV`, `(English Strong Ale) - 8.2%ABV`), which the recorded trace shows the
+shipping parser turning into `ITEM`s, and nothing else.
+
+Also: `dropEnumerator` keeps tap numbers out of names (`1 - `, `12.`, `#3`), guarded so `10 Barrel`,
+`151 Rum Punch` and `2019 Cabernet` are untouched; `_` is now a separator, so underscore leader
+rules don't survive into the title.
+
+### 3. `RecognizeDocumentsRequest` (iOS 26) is now a second reader, chosen by score
+
+The deeper fix for §1 is not to *infer* the table. Apple reports it. A numbered tap list is a
+three-column table and a two-row item is a paragraph.
+
+`DocumentStructureRecognizer` emits two independent readings (the document's own page text, and one
+line per table row) rather than interleaving tables with prose, which would need each element's
+bounding region and a reading-order sort — exactly the geometry this is meant to stop hand-rolling.
+`MenuTextRecognizer` runs the geometric path **and** the structured one and keeps whichever reading
+scores better, via the new pure `MenuReadSelection`: most priced drinks wins, leaner wins at equal
+yield, first candidate wins a full tie (the geometric reading is passed first, so ties change
+nothing). Scored through `MenuParser` + `PricePlausibility`, the same two steps `MenuPipeline`
+applies, so a junk reading can't win on withdrawn prices.
+
+Preferring one engine by OS version is a coin flip per photo; scoring both is a decision. Cost is
+one extra on-device pass per scan.
+
+**⚠️ Seven Vision API names in that file rest on Apple's docs, not on a compile** — they're listed
+in a block comment at the top of the file, confined to one function, behind `#available` with a
+total fallback to today's behaviour. Verify them in Xcode first.
+
+### 4. A dump for the half of the pipeline nothing could see
+
+The 09-26 report was "garbage answers next to the drinks — fake drinks with fake $ and ABV", which
+is a **precision** failure and therefore *not* §1: a stranded price column produces an empty
+ranking, not a populated one. §2 is the prime suspect (a continuation row becomes a phantom drink,
+and every real beer loses its printed ABV to a category default), but the existing console export
+stops at `[MenuItem]`, and between there and the screen sit three unobserved steps —
+`PricePlausibility` withdrawing a price, `DrinkResolver` resolving ABV/size through
+`BeverageKnowledge`, and `ValueRanker` ordering the result.
+
+`ObservationFixture.sessionDump` closes it: per ranked row, the metric value, price, category, and
+**ABV/size with provenance**. `read` vs `est` is the diagnostic that matters here — a podium built
+out of `est` ABVs on a menu that prints its ABVs on every line means the printed numbers were lost
+upstream, which is a parser bug; the same podium with `read` ABVs and silly values is a
+knowledge-table or metric bug. One glance separates them.
+
+Wired into `CaptureHomeView` behind `#if DEBUG`, printed straight after `viewModel.load`. It reads
+the view model's **own** session rather than rebuilding one: `MenuPipeline()`'s default is
+`StaticBeverageKnowledge` while the screen resolves through `CatalogBackedKnowledge` over the
+bundled catalog, so a rebuilt session would disagree with the ranking it exists to explain.
+
+**Apply order matters.** The dump is behaviour-neutral, so take it *first*
+(`step1-ranking-dump.patch`), capture both Shorty's menus on otherwise-unchanged code, and only then
+apply the fixes (`step2-…`, which contains step 1). Capturing after the fixes loses the failing
+baseline and with it any way to show the fixes worked.
+
+### 5. Known residuals
+
+- **`console.txt` is still pre-veto** (the 09-07 part 3 note said so). `verify.py`'s 8/8 therefore
+  validates the pre-change baseline, which is the right thing for the bench and the wrong thing to
+  quote as proof of current behaviour. Both Shorty's menus need dumping; the §1 evidence rests on a
+  *reconstruction*, not on real coordinates.
+- **`Tooling/assembler.py`'s unit change was measured again and still not ported.** Aspect ratio
+  across the dumps runs 0.386–0.751, so `minSectionGap`/`minGutterGap`/`minColumnSpan` — all page
+  fractions — mean different physical distances per crop. Expressed in median text heights, mean
+  fragmentation goes 0.261 → ~0.228. Deferred deliberately: it moves every geometry decision at
+  once and should land against fresh dumps, not stale ones.
+- **~350 hand-curated English word literals across twelve vocabularies** in `MenuParser`, and box
+  height is still read exactly once (row tolerance) even though header-vs-item and
+  item-vs-description are typographic facts sitting in the geometry. That is the standing
+  generalization debt; §1–§3 above deliberately add no new vocabulary.
+- `DetectLensSmudgeRequest` (iOS 26) gives a 0–1 smudge confidence and would make a decent "clean
+  your lens / retake" hint. Untouched. `ImageDeskew` is still not in `Infrastructure/`, five
+  sessions on.
+
+---
+
 ## ⇢ STATUS (2026-09-09, part 2) — RevenueCat is integrated and proven on device
 
 **Supersedes the "Next" list in the 2026-09-07 part 3 note.** Monetization is done except for the
